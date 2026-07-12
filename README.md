@@ -63,9 +63,9 @@ npm install
 ### 2. Configure Passcode
 Create a `.env` file in the root directory (this is already ignored in `.gitignore`):
 ```env
-VITE_VAULT_PASSWORD=2025
+VITE_VAULT_PASSWORD=your_secure_passcode_here
 ```
-*(If `.env` is omitted, the app will default to passcode `2025` for local verification).*
+*(Note: If no `.env` file is present locally, the system will fall back to a default passcode of `2025` for easy offline testing, but you should configure your own private passcode locally).*
 
 ### 3. Run Locally
 Start the development server:
