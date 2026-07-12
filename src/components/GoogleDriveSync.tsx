@@ -781,6 +781,35 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
           margin-top: 4px;
           list-style-type: circle;
         }
+
+        @media (max-width: 600px) {
+          .account-list-item {
+            flex-direction: column;
+            align-items: stretch !important;
+            gap: 12px;
+          }
+          .item-left {
+            width: 100%;
+          }
+          .item-middle {
+            width: 100%;
+            margin: 4px 0;
+          }
+          .item-right {
+            width: 100%;
+            justify-content: flex-end;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .token-input-row {
+            flex-direction: column;
+            gap: 10px;
+          }
+          .token-input-row .btn {
+            width: 100%;
+          }
+        }
       `}</style>
     </div>
   );
