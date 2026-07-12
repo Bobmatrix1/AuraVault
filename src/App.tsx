@@ -144,6 +144,11 @@ function App() {
   // Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
 
+  // File Transfer Progress states
+  const [transferProgress, setTransferProgress] = useState<number | null>(null);
+  const [transferType, setTransferType] = useState<'upload' | 'download' | null>(null);
+  const [transferFileName, setTransferFileName] = useState<string>('');
+
   // Modals shortcuts (triggered from dashboard)
   const [triggerCredDirectly, setTriggerCredDirectly] = useState(false);
   const [triggerSocialDirectly, setTriggerSocialDirectly] = useState(false);
@@ -463,9 +468,23 @@ function App() {
     }
 
     try {
-      const blob = await gdrive.downloadFile(file.googleFileId, targetDrive.token, targetDrive.isDemo);
+      setTransferType('download');
+      setTransferFileName(file.name);
+      setTransferProgress(0);
+
+      const blob = await gdrive.downloadFile(
+        file.googleFileId, 
+        targetDrive.token, 
+        targetDrive.isDemo,
+        (pct) => setTransferProgress(pct)
+      );
+
+      setTransferProgress(null);
+      setTransferType(null);
       return URL.createObjectURL(blob);
     } catch (err: any) {
+      setTransferProgress(null);
+      setTransferType(null);
       if (err.message === 'DEMO_MODE_FALLBACK') {
         // Fall back to local Base64 cache kept for simulation files
         return file.dataUrl;
@@ -500,12 +519,20 @@ function App() {
         }
 
         if (fileBlob) {
+          setTransferType('upload');
+          setTransferFileName(name);
+          setTransferProgress(0);
+
           // Direct Google Drive Upload (rest/simulation)
           googleFileId = await gdrive.uploadFile(
             { name, type, blob: fileBlob },
             activeDrive.token,
-            activeDrive.isDemo
+            activeDrive.isDemo,
+            (pct) => setTransferProgress(pct)
           );
+          
+          setTransferProgress(null);
+          setTransferType(null);
           driveEmail = activeDrive.email;
 
           // Increment local quota counter for display
@@ -908,6 +935,24 @@ function App() {
       <main className="main-content">
         {renderTabContent()}
       </main>
+
+      {/* File Transfer Progress Card */}
+      {transferProgress !== null && (
+        <div className="transfer-progress-card glass">
+          <div className="transfer-info">
+            <span className="transfer-icon-animate">
+              {transferType === 'upload' ? '📤' : '📥'}
+            </span>
+            <span className="transfer-text">
+              {transferType === 'upload' ? 'Uploading' : 'Downloading'} <strong>{transferFileName}</strong>...
+            </span>
+            <span className="transfer-pct">{transferProgress}%</span>
+          </div>
+          <div className="transfer-bar-container">
+            <div className="transfer-bar" style={{ width: `${transferProgress}%` }}></div>
+          </div>
+        </div>
+      )}
 
       {/* Glassmorphic Toast Notification engine */}
       <div className="toast-container">

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { VaultSocialHandle } from '../utils/db';
 import { playSound } from '../utils/audio';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface SocialHandlesProps {
   socials: VaultSocialHandle[];
@@ -39,6 +40,7 @@ export const SocialHandles: React.FC<SocialHandlesProps> = ({
 }) => {
   const [showAddModal, setShowAddModal] = useState(showAddModalDirectly);
   const [editingSocial, setEditingSocial] = useState<VaultSocialHandle | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<VaultSocialHandle | null>(null);
   
   // UI states
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -282,10 +284,7 @@ export const SocialHandles: React.FC<SocialHandlesProps> = ({
                   <button 
                     className="btn btn-danger btn-sm" 
                     onClick={() => {
-                      if(confirm(`Are you sure you want to remove "@${social.username}"?`)) {
-                        onDeleteSocial(social.id);
-                        toast(`Removed "@${social.username}"`, 'info');
-                      }
+                      setDeleteTarget(social);
                     }}
                   >
                     <Trash2 size={12} /> Remove
@@ -411,6 +410,20 @@ export const SocialHandles: React.FC<SocialHandlesProps> = ({
           </form>
         </div>
       )}
+
+      {/* Custom Delete Confirmation Modal */}
+      <ConfirmDeleteModal 
+        isOpen={deleteTarget !== null}
+        title="Remove Brand Profile?"
+        message={`Are you sure you want to remove the brand profile for "@${deleteTarget?.username}"? This action cannot be undone.`}
+        onConfirm={() => {
+          if (deleteTarget) {
+            onDeleteSocial(deleteTarget.id);
+            toast(`Removed "@${deleteTarget.username}"`, 'info');
+          }
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       <style>{`
         .social-handles-view {

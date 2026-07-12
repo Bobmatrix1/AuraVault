@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { playSound } from '../utils/audio';
 import { VaultCredential } from '../utils/db';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface CredentialVaultProps {
   credentials: VaultCredential[];
@@ -52,6 +53,7 @@ export const CredentialVault: React.FC<CredentialVaultProps> = ({
   // Modal / Form State
   const [showAddModal, setShowAddModal] = useState(showAddModalDirectly);
   const [editingCred, setEditingCred] = useState<VaultCredential | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<VaultCredential | null>(null);
   
   // Form Inputs
   const [name, setName] = useState('');
@@ -348,10 +350,7 @@ export const CredentialVault: React.FC<CredentialVaultProps> = ({
                     <button 
                       className="card-opt-btn delete" 
                       onClick={() => {
-                        if (confirm(`Are you sure you want to delete credential "${cred.name}"?`)) {
-                          onDeleteCredential(cred.id);
-                          toast(`Deleted "${cred.name}"`, 'info');
-                        }
+                        setDeleteTarget(cred);
                       }}
                       title="Delete"
                     >
@@ -617,6 +616,20 @@ export const CredentialVault: React.FC<CredentialVaultProps> = ({
           </form>
         </div>
       )}
+
+      {/* Custom Delete Confirmation Modal */}
+      <ConfirmDeleteModal 
+        isOpen={deleteTarget !== null}
+        title="Delete Credential?"
+        message={`Are you sure you want to delete the credential for "${deleteTarget?.name}"? This action cannot be undone.`}
+        onConfirm={() => {
+          if (deleteTarget) {
+            onDeleteCredential(deleteTarget.id);
+            toast(`Deleted "${deleteTarget.name}"`, 'info');
+          }
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       <style>{`
         .credential-vault-view {

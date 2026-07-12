@@ -64,52 +64,112 @@ export const gdrive = {
   },
 
   // Upload file directly to Google Drive
-  async uploadFile(
+  // Upload file directly to Google Drive
+  uploadFile(
     file: { name: string; type: string; blob: Blob }, 
     token: string, 
-    isDemo = false
+    isDemo = false,
+    onProgress?: (percent: number) => void
   ): Promise<string> {
     if (isDemo || !isGCPConfigured()) {
-      // Simulate Google Drive uploading delay and return mock ID
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      return 'gdrive_file_' + Math.random().toString(36).substr(2, 12);
+      return new Promise((resolve) => {
+        let pct = 0;
+        const interval = setInterval(() => {
+          pct += 10;
+          if (onProgress) onProgress(pct);
+          if (pct >= 100) {
+            clearInterval(interval);
+            resolve('gdrive_file_' + Math.random().toString(36).substr(2, 12));
+          }
+        }, 150);
+      });
     }
 
-    // Google Drive multipart upload
-    const metadata = {
-      name: file.name,
-      mimeType: file.type,
-      parents: ['appDataFolder'] // Secure app-data folder (hidden from standard Drive view)
-    };
+    return new Promise((resolve, reject) => {
+      const apiKey = localStorage.getItem('gdrive_api_key') || import.meta.env.VITE_GCP_API_KEY || '';
+      const url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart${apiKey ? `&key=${apiKey}` : ''}`;
+      
+      const boundary = 'foo_bar_boundary';
+      const delimiter = `\n--${boundary}\n`;
+      const closeDelim = `\n--${boundary}--`;
 
-    const form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-    form.append('file', file.blob);
+      const metadata = {
+        name: file.name,
+        mimeType: file.type,
+        parents: ['appDataFolder']
+      };
 
-    const response = await fetch(GDRIVE_UPLOAD_URL, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: form
+      const reader = new FileReader();
+      reader.onload = function() {
+        const rawData = reader.result as ArrayBuffer;
+        
+        // Construct multipart request manually so we can track XHR progress
+        const header = `${delimiter}Content-Type: application/json; charset=UTF-8\n\n${JSON.stringify(metadata)}\n${delimiter}Content-Type: ${file.type}\nContent-Transfer-Encoding: base64\n\n`;
+        
+        // Base64 encode file content
+        const base64Content = btoa(
+          new Uint8Array(rawData).reduce((data, byte) => data + String.fromCharCode(byte), '')
+        );
+        
+        const payload = header + base64Content + closeDelim;
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        xhr.setRequestHeader('Content-Type', `multipart/related; boundary=${boundary}`);
+
+        if (onProgress) {
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const pct = Math.round((e.loaded / e.total) * 100);
+              onProgress(pct);
+            }
+          };
+        }
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const resObj = JSON.parse(xhr.responseText);
+              resolve(resObj.id);
+            } catch (err) {
+              reject(new Error('Invalid response from Drive API'));
+            }
+          } else {
+            reject(new Error(`Drive API Upload failed: ${xhr.statusText || xhr.status}`));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error('Network error during upload'));
+        xhr.send(payload);
+      };
+      
+      reader.onerror = () => reject(new Error('Failed to read upload file blob'));
+      reader.readAsArrayBuffer(file.blob);
     });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Upload failed: ${errText}`);
-    }
-
-    const data = await response.json();
-    return data.id; // Returns Google File ID
   },
 
   // Download file from Google Drive
-  async downloadFile(fileId: string, token: string, isDemo = false): Promise<Blob> {
+  async downloadFile(
+    fileId: string, 
+    token: string, 
+    isDemo = false,
+    onProgress?: (percent: number) => void
+  ): Promise<Blob> {
     if (isDemo || !isGCPConfigured() || fileId.startsWith('gdrive_file_')) {
-      // In demo mode, we simulate fetching the file (the client-side fallback retrieves the Base64 dataUrl)
-      await new Promise(resolve => setTimeout(resolve, 800));
-      throw new Error('DEMO_MODE_FALLBACK'); // Parent caller should load local DataURL for demo files
+      if (onProgress) {
+        for (let pct = 0; pct <= 100; pct += 25) {
+          onProgress(pct);
+          await new Promise(r => setTimeout(r, 120));
+        }
+      }
+      throw new Error('DEMO_MODE_FALLBACK');
     }
 
-    const response = await fetch(GDRIVE_DOWNLOAD_URL(fileId), {
+    const apiKey = localStorage.getItem('gdrive_api_key') || import.meta.env.VITE_GCP_API_KEY || '';
+    const url = `${GDRIVE_DOWNLOAD_URL(fileId)}${apiKey ? `&key=${apiKey}` : ''}`;
+    
+    const response = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` }
     });
 
@@ -117,7 +177,40 @@ export const gdrive = {
       throw new Error(`Failed to download file from Google Drive: ${response.statusText}`);
     }
 
-    return await response.blob();
+    const contentLengthHeader = response.headers.get('Content-Length');
+    const contentLength = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
+    
+    if (!contentLength || !response.body || !onProgress) {
+      return await response.blob();
+    }
+
+    const reader = response.body.getReader();
+    let receivedLength = 0;
+    const chunks: Uint8Array[] = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        receivedLength += value.length;
+        const percent = Math.round((receivedLength / contentLength) * 100);
+        onProgress(Math.min(99, percent)); // Keep at 99% until merged
+      }
+    }
+
+    // Merge chunks
+    const merged = new Uint8Array(receivedLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    if (onProgress) onProgress(100);
+
+    const mimeType = response.headers.get('Content-Type') || 'application/octet-stream';
+    return new Blob([merged], { type: mimeType });
   },
 
   // Delete file from Google Drive

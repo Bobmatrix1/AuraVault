@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { playSound } from '../utils/audio';
 import { VaultFile, VaultFolder } from '../utils/db';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface FileStorageProps {
   files: VaultFile[];
@@ -107,6 +108,7 @@ export const FileStorage: React.FC<FileStorageProps> = ({
   const [previewFile, setPreviewFile] = useState<VaultFile | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isFetchingCloud, setIsFetchingCloud] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; type: 'file' | 'folder' } | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -378,10 +380,7 @@ export const FileStorage: React.FC<FileStorageProps> = ({
                     className="delete-item-btn"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if(confirm(`Are you sure you want to delete folder "${folder.name}" and all its contents?`)) {
-                        onDeleteFolder(folder.id);
-                        toast(`Deleted folder "${folder.name}"`, 'info');
-                      }
+                      setDeleteTarget({ id: folder.id, name: folder.name, type: 'folder' });
                     }}
                   >
                     <Trash2 size={14} />
@@ -423,10 +422,7 @@ export const FileStorage: React.FC<FileStorageProps> = ({
                     <button 
                       className="file-action-btn delete" 
                       onClick={() => {
-                        if (confirm(`Delete file "${file.name}"?`)) {
-                          onDeleteFile(file.id);
-                          toast(`Deleted file "${file.name}"`, 'info');
-                        }
+                        setDeleteTarget({ id: file.id, name: file.name, type: 'file' });
                       }}
                       title="Delete"
                     >
@@ -469,10 +465,7 @@ export const FileStorage: React.FC<FileStorageProps> = ({
                           className="table-action-btn delete"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if(confirm(`Are you sure you want to delete folder "${folder.name}"?`)) {
-                              onDeleteFolder(folder.id);
-                              toast(`Deleted folder "${folder.name}"`, 'info');
-                            }
+                            setDeleteTarget({ id: folder.id, name: folder.name, type: 'folder' });
                           }}
                         >
                           <Trash2 size={14} />
@@ -503,10 +496,7 @@ export const FileStorage: React.FC<FileStorageProps> = ({
                           <button 
                             className="table-action-btn delete"
                             onClick={() => {
-                              if(confirm(`Delete "${file.name}"?`)) {
-                                onDeleteFile(file.id);
-                                toast(`Deleted "${file.name}"`, 'info');
-                              }
+                              setDeleteTarget({ id: file.id, name: file.name, type: 'file' });
                             }}
                           >
                             <Trash2 size={14} />
@@ -672,6 +662,29 @@ export const FileStorage: React.FC<FileStorageProps> = ({
           </div>
         </div>
       )}
+
+      {/* Custom Delete Confirmation Modal */}
+      <ConfirmDeleteModal 
+        isOpen={deleteTarget !== null}
+        title={deleteTarget?.type === 'folder' ? 'Delete Folder?' : 'Delete File?'}
+        message={
+          deleteTarget?.type === 'folder' 
+            ? `Are you sure you want to delete folder "${deleteTarget?.name}" and all its contents? This action cannot be undone.`
+            : `Are you sure you want to delete file "${deleteTarget?.name}"? This action cannot be undone.`
+        }
+        onConfirm={() => {
+          if (deleteTarget) {
+            if (deleteTarget.type === 'folder') {
+              onDeleteFolder(deleteTarget.id);
+              toast(`Deleted folder "${deleteTarget.name}"`, 'info');
+            } else {
+              onDeleteFile(deleteTarget.id);
+              toast(`Deleted file "${deleteTarget.name}"`, 'info');
+            }
+          }
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       <style>{`
         .file-note-label {
