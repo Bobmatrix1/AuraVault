@@ -147,7 +147,11 @@ export const VaultLock: React.FC<VaultLockProps> = ({ onUnlock }) => {
           </div>
 
           {/* Keypad Grid */}
-          <div className="keypad-grid">
+          <div className="keypad-grid" onClick={(e) => {
+            if (e.target instanceof HTMLButtonElement) {
+              e.target.blur();
+            }
+          }}>
             {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(num => (
               <button key={num} type="button" className="keypad-btn" onClick={() => handleKeyPress(num)}>
                 {num}
@@ -444,6 +448,23 @@ export const VaultLock: React.FC<VaultLockProps> = ({ onUnlock }) => {
           background: rgba(16, 185, 129, 0.2);
           border-color: rgba(16, 185, 129, 0.5);
           transform: scale(0.95);
+        }
+        .keypad-btn:focus {
+          outline: none;
+          background: rgba(255, 255, 255, 0.03) !important;
+          border-color: var(--border-light) !important;
+        }
+        .btn-clear:focus {
+          outline: none;
+          background: rgba(255, 255, 255, 0.03) !important;
+          border-color: rgba(244, 63, 94, 0.15) !important;
+          color: var(--accent-red) !important;
+        }
+        .btn-enter:focus {
+          outline: none;
+          background: rgba(255, 255, 255, 0.03) !important;
+          border-color: rgba(16, 185, 129, 0.15) !important;
+          color: var(--accent-green) !important;
         }
 
         .unlock-icon-spin {
