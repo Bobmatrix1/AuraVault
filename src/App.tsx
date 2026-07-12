@@ -213,6 +213,48 @@ function App() {
     }
   };
 
+  // Push database backup to Google Drive in the background (silent auto-sync)
+  const triggerPushSync = async () => {
+    const active = connectedDrives.find(d => d.isActive);
+    if (!active) return;
+    try {
+      setSyncStatus('syncing');
+      const payload = await handleExportBackup();
+      const now = Date.now();
+      
+      await gdrive.uploadFile(
+        { 
+          name: `auravault_db_backup_${now}.json`, 
+          type: 'application/json', 
+          blob: new Blob([payload], { type: 'application/json' }) 
+        },
+        active.token,
+        active.isDemo
+      );
+      
+      localStorage.setItem('auravault_last_sync_time', now.toString());
+
+      // Silently clean up older backups
+      try {
+        const filesList = await gdrive.listFiles(active.token, active.isDemo);
+        const backupFiles = filesList.filter(f => f.name.startsWith('auravault_db_backup_'));
+        if (backupFiles.length > 3) {
+          backupFiles.sort((a, b) => b.name.localeCompare(a.name));
+          const toDelete = backupFiles.slice(2);
+          for (const f of toDelete) {
+            await gdrive.deleteFile(f.id, active.token, active.isDemo);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to clean up old backups during background push:', err);
+      }
+    } catch (err) {
+      console.error('Failed to push database backup in background:', err);
+    } finally {
+      setSyncStatus('synced');
+    }
+  };
+
   // --- GOOGLE DRIVE MULTI-ACCOUNT MANAGEMENT ---
   const handleLinkDrive = (email: string, token: string, limit: number, usage: number, isDemo = false) => {
     setConnectedDrives(prev => {
@@ -407,6 +449,7 @@ function App() {
 
     await db.put<VaultFile>('files', newFile);
     await refreshData();
+    triggerPushSync();
   };
 
   const handleDeleteFile = async (id: string) => {
@@ -435,6 +478,7 @@ function App() {
 
     await db.delete('files', id);
     await refreshData();
+    triggerPushSync();
   };
 
   const handleDeleteFolder = async (id: string) => {
@@ -444,6 +488,7 @@ function App() {
       await handleDeleteFile(file.id);
     }
     await refreshData();
+    triggerPushSync();
   };
 
   const handleCreateFolder = async (name: string) => {
@@ -454,6 +499,7 @@ function App() {
     };
     await db.put<VaultFolder>('folders', newFolder);
     await refreshData();
+    triggerPushSync();
   };
 
   // Credentials
@@ -465,6 +511,7 @@ function App() {
     };
     await db.put<VaultCredential>('credentials', newCred);
     await refreshData();
+    triggerPushSync();
   };
 
   const handleEditCredential = async (id: string, credUpdate: Partial<VaultCredential>) => {
@@ -479,11 +526,13 @@ function App() {
     };
     await db.put<VaultCredential>('credentials', updated);
     await refreshData();
+    triggerPushSync();
   };
 
   const handleDeleteCredential = async (id: string) => {
     await db.delete('credentials', id);
     await refreshData();
+    triggerPushSync();
   };
 
   // Social Handles
@@ -495,6 +544,7 @@ function App() {
     };
     await db.put<VaultSocialHandle>('socialHandles', newSocial);
     await refreshData();
+    triggerPushSync();
   };
 
   const handleEditSocial = async (id: string, socialUpdate: Partial<VaultSocialHandle>) => {
@@ -509,20 +559,27 @@ function App() {
     };
     await db.put<VaultSocialHandle>('socialHandles', updated);
     await refreshData();
+    triggerPushSync();
   };
 
   const handleDeleteSocial = async (id: string) => {
     await db.delete('socialHandles', id);
     await refreshData();
+    triggerPushSync();
   };
 
   // Backup exporter/importer
-  const handleExportBackup = (): string => {
+  const handleExportBackup = async (): Promise<string> => {
+    const allFiles = await db.getAll<VaultFile>('files');
+    const allCredentials = await db.getAll<VaultCredential>('credentials');
+    const allSocials = await db.getAll<VaultSocialHandle>('socialHandles');
+    const allFolders = await db.getAll<VaultFolder>('folders');
+
     const payload = {
-      files,
-      credentials,
-      socials,
-      folders,
+      files: allFiles,
+      credentials: allCredentials,
+      socials: allSocials,
+      folders: allFolders,
       exportVersion: 1.0,
       timestamp: Date.now()
     };
@@ -723,7 +780,7 @@ function App() {
 
             // 2. Upload our latest state
             const now = Date.now();
-            const payload = handleExportBackup();
+            const payload = await handleExportBackup();
             await gdrive.uploadFile(
               { 
                 name: `auravault_db_backup_${now}.json`, 

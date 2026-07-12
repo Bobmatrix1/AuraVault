@@ -179,28 +179,38 @@ export const FileStorage: React.FC<FileStorageProps> = ({
     e.preventDefault();
     if (!pendingUploadFile) return;
 
-    setIsUploading(true);
     const file = pendingUploadFile;
+    const note = fileNote.trim();
+
+    // Close the modal immediately so the user can continue using the dashboard
+    setPendingUploadFile(null);
+    setFileNote('');
+
+    setIsUploading(true);
+    toast(`Uploading "${file.name}" to Google Drive...`, 'info');
 
     try {
       const reader = new FileReader();
       reader.onload = async () => {
-        const dataUrl = reader.result as string;
-        await onUploadFile(file.name, file.size, file.type, dataUrl, currentFolderId, file, fileNote.trim());
-        playSound.pop();
-        setIsUploading(false);
-        setPendingUploadFile(null);
-        setFileNote('');
-        toast(`"${file.name}" uploaded successfully`, 'success');
-        if (fileInputRef.current) fileInputRef.current.value = '';
+        try {
+          const dataUrl = reader.result as string;
+          await onUploadFile(file.name, file.size, file.type, dataUrl, currentFolderId, file, note);
+          playSound.pop();
+          toast(`"${file.name}" uploaded successfully!`, 'success');
+        } catch (err) {
+          toast(`Failed to upload "${file.name}"`, 'error');
+        } finally {
+          setIsUploading(false);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        }
       };
       reader.onerror = () => {
-        toast('Failed to read file', 'error');
+        toast('Failed to read file contents', 'error');
         setIsUploading(false);
       };
       reader.readAsDataURL(file);
     } catch (err) {
-      toast('Error uploading file', 'error');
+      toast('Error processing file upload', 'error');
       setIsUploading(false);
     }
   };
@@ -303,6 +313,7 @@ export const FileStorage: React.FC<FileStorageProps> = ({
             ref={fileInputRef} 
             style={{ display: 'none' }} 
             onChange={handleFileChange}
+            accept="image/*,video/*,audio/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/*"
           />
         </div>
       </div>
@@ -553,7 +564,7 @@ export const FileStorage: React.FC<FileStorageProps> = ({
               <button type="button" className="close-btn" onClick={() => setPendingUploadFile(null)}>✕</button>
             </div>
             
-            <div style={{ marginBottom: '20px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+            <div style={{ marginBottom: '20px', fontSize: '13px', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
               <p>Uploading: <strong>{pendingUploadFile.name}</strong> ({formatBytes(pendingUploadFile.size)})</p>
             </div>
 
@@ -1055,6 +1066,12 @@ export const FileStorage: React.FC<FileStorageProps> = ({
           gap: 24px;
           border-top: 1px solid var(--border-light);
           padding-top: 16px;
+        }
+        @media (max-width: 480px) {
+          .preview-meta-row {
+            flex-direction: column;
+            gap: 12px;
+          }
         }
         .meta-item {
           display: flex;
