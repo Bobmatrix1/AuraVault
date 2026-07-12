@@ -17,6 +17,9 @@ import {
 } from './utils/db';
 
 import { GDriveAccount, gdrive } from './utils/gdrive';
+import { db_firestore } from './utils/firebase';
+import { encryptText, decryptText } from './utils/crypto';
+import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
 interface Toast {
   id: string;
@@ -165,6 +168,107 @@ function App() {
       addToast('Failed to initialize local secure vault database', 'error');
     }
   };
+
+  // Encryption / Decryption wrapper helpers
+  const passcode = import.meta.env.VITE_VAULT_PASSWORD || '2025';
+
+  const encryptDoc = async (storeName: string, docData: any): Promise<any> => {
+    const copy = { ...docData };
+    if (storeName === 'credentials') {
+      if (copy.username) copy.username = await encryptText(copy.username, passcode);
+      if (copy.password) copy.password = await encryptText(copy.password, passcode);
+      if (copy.note) copy.note = await encryptText(copy.note, passcode);
+    } else if (storeName === 'socialHandles') {
+      if (copy.password) copy.password = await encryptText(copy.password, passcode);
+      if (copy.notes) copy.notes = await encryptText(copy.notes, passcode);
+    } else if (storeName === 'files') {
+      if (copy.note) copy.note = await encryptText(copy.note, passcode);
+    }
+    return copy;
+  };
+
+  const decryptDoc = async (storeName: string, docData: any): Promise<any> => {
+    const copy = { ...docData };
+    if (storeName === 'credentials') {
+      if (copy.username) copy.username = await decryptText(copy.username, passcode);
+      if (copy.password) copy.password = await decryptText(copy.password, passcode);
+      if (copy.note) copy.note = await decryptText(copy.note, passcode);
+    } else if (storeName === 'socialHandles') {
+      if (copy.password) copy.password = await decryptText(copy.password, passcode);
+      if (copy.notes) copy.notes = await decryptText(copy.notes, passcode);
+    } else if (storeName === 'files') {
+      if (copy.note) copy.note = await decryptText(copy.note, passcode);
+    }
+    return copy;
+  };
+
+  const writeData = async (storeName: string, id: string, docData: any) => {
+    if (db_firestore) {
+      try {
+        const encrypted = await encryptDoc(storeName, docData);
+        await setDoc(doc(db_firestore!, storeName, id), encrypted);
+      } catch (err) {
+        console.error(`Failed to write to Firestore collection "${storeName}":`, err);
+        await db.put(storeName as any, docData);
+        await refreshData();
+      }
+    } else {
+      await db.put(storeName as any, docData);
+      await refreshData();
+      triggerPushSync();
+    }
+  };
+
+  const deleteData = async (storeName: string, id: string) => {
+    if (db_firestore) {
+      try {
+        await deleteDoc(doc(db_firestore!, storeName, id));
+      } catch (err) {
+        console.error(`Failed to delete from Firestore collection "${storeName}":`, err);
+        await db.delete(storeName as any, id);
+        await refreshData();
+      }
+    } else {
+      await db.delete(storeName as any, id);
+      await refreshData();
+      triggerPushSync();
+    }
+  };
+
+  // Listen to Firestore updates in real-time when authenticated
+  useEffect(() => {
+    if (!isAuthenticated || !db_firestore) return;
+
+    const collections = ['folders', 'files', 'credentials', 'socialHandles'];
+    const unsubscribes: (() => void)[] = [];
+
+    collections.forEach((storeName) => {
+      const colRef = collection(db_firestore!, storeName);
+      const unsub = onSnapshot(colRef, async (snapshot) => {
+        try {
+          // Clear local cache for this store
+          await db.clearStore(storeName as any);
+
+          // Decrypt and cache all remote documents locally
+          for (const docObj of snapshot.docs) {
+            const rawData = docObj.data();
+            const decryptedData = await decryptDoc(storeName, rawData);
+            await db.put(storeName as any, decryptedData);
+          }
+
+          // Trigger state update
+          await refreshData();
+        } catch (err) {
+          console.error(`Failed to synchronize "${storeName}" collection:`, err);
+        }
+      });
+      unsubscribes.push(unsub);
+    });
+
+    return () => {
+      unsubscribes.forEach((unsub) => unsub());
+    };
+  }, [isAuthenticated]);
 
   // Toast System
   const addToast = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
@@ -447,9 +551,7 @@ function App() {
       note
     };
 
-    await db.put<VaultFile>('files', newFile);
-    await refreshData();
-    triggerPushSync();
+    await writeData('files', newFile.id, newFile);
   };
 
   const handleDeleteFile = async (id: string) => {
@@ -476,19 +578,15 @@ function App() {
       }
     }
 
-    await db.delete('files', id);
-    await refreshData();
-    triggerPushSync();
+    await deleteData('files', id);
   };
 
   const handleDeleteFolder = async (id: string) => {
-    await db.delete('folders', id);
+    await deleteData('folders', id);
     const filesInFolder = files.filter(f => f.folderId === id);
     for (const file of filesInFolder) {
       await handleDeleteFile(file.id);
     }
-    await refreshData();
-    triggerPushSync();
   };
 
   const handleCreateFolder = async (name: string) => {
@@ -497,9 +595,7 @@ function App() {
       name,
       createdAt: Date.now()
     };
-    await db.put<VaultFolder>('folders', newFolder);
-    await refreshData();
-    triggerPushSync();
+    await writeData('folders', newFolder.id, newFolder);
   };
 
   // Credentials
@@ -509,9 +605,7 @@ function App() {
       id: 'cred_' + Math.random().toString(36).substr(2, 9),
       updatedAt: Date.now()
     };
-    await db.put<VaultCredential>('credentials', newCred);
-    await refreshData();
-    triggerPushSync();
+    await writeData('credentials', newCred.id, newCred);
   };
 
   const handleEditCredential = async (id: string, credUpdate: Partial<VaultCredential>) => {
@@ -524,15 +618,11 @@ function App() {
       id,
       updatedAt: Date.now()
     };
-    await db.put<VaultCredential>('credentials', updated);
-    await refreshData();
-    triggerPushSync();
+    await writeData('credentials', updated.id, updated);
   };
 
   const handleDeleteCredential = async (id: string) => {
-    await db.delete('credentials', id);
-    await refreshData();
-    triggerPushSync();
+    await deleteData('credentials', id);
   };
 
   // Social Handles
@@ -542,9 +632,7 @@ function App() {
       id: 'social_' + Math.random().toString(36).substr(2, 9),
       updatedAt: Date.now()
     };
-    await db.put<VaultSocialHandle>('socialHandles', newSocial);
-    await refreshData();
-    triggerPushSync();
+    await writeData('socialHandles', newSocial.id, newSocial);
   };
 
   const handleEditSocial = async (id: string, socialUpdate: Partial<VaultSocialHandle>) => {
@@ -557,15 +645,11 @@ function App() {
       id,
       updatedAt: Date.now()
     };
-    await db.put<VaultSocialHandle>('socialHandles', updated);
-    await refreshData();
-    triggerPushSync();
+    await writeData('socialHandles', updated.id, updated);
   };
 
   const handleDeleteSocial = async (id: string) => {
-    await db.delete('socialHandles', id);
-    await refreshData();
-    triggerPushSync();
+    await deleteData('socialHandles', id);
   };
 
   // Backup exporter/importer
