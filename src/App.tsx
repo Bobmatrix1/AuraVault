@@ -300,6 +300,61 @@ function App() {
     }, 3500);
   };
 
+  // Helper to validate and automatically refresh expired Google access tokens
+  const getOrRefreshToken = async (email: string): Promise<string> => {
+    const drive = connectedDrives.find(d => d.email.toLowerCase() === email.toLowerCase());
+    if (!drive) throw new Error('Drive not connected');
+
+    // If token is still valid (with a 5-minute buffer), return it!
+    if (Date.now() < drive.expiresAt - 5 * 60 * 1000) {
+      return drive.token;
+    }
+
+    // Token has expired! Check if we have refresh credentials available
+    const cid = localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '';
+    const secret = import.meta.env.VITE_GCP_CLIENT_SECRET || '';
+    const refreshToken = import.meta.env.VITE_GCP_REFRESH_TOKEN || '';
+
+    if (cid && secret && refreshToken) {
+      try {
+        addToast('Google Drive session expired. Refreshing token...', 'info');
+        const response = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: cid,
+            client_secret: secret,
+            refresh_token: refreshToken,
+            grant_type: 'refresh_token'
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const newToken = data.access_token;
+          const expiresAt = Date.now() + 3600 * 1000;
+
+          // Update token in state
+          setConnectedDrives(prev => 
+            prev.map(d => d.email.toLowerCase() === email.toLowerCase()
+              ? { ...d, token: newToken, expiresAt }
+              : d
+            )
+          );
+
+          addToast('Google Drive session refreshed successfully!', 'success');
+          return newToken;
+        }
+      } catch (err) {
+        console.error('Failed to refresh token:', err);
+      }
+    }
+
+    // Fallback for custom user oauth flows
+    addToast(`Google Drive session expired for ${email}. Please link your account again.`, 'error');
+    throw new Error('Google Drive session expired');
+  };
+
   // Pull backup from Google Drive and restore database
   const triggerPullSync = async (token: string) => {
     try {
@@ -344,6 +399,7 @@ function App() {
       setSyncStatus('syncing');
       const payload = await handleExportBackup();
       const now = Date.now();
+      const token = await getOrRefreshToken(active.email);
       
       await gdrive.uploadFile(
         { 
@@ -351,20 +407,20 @@ function App() {
           type: 'application/json', 
           blob: new Blob([payload], { type: 'application/json' }) 
         },
-        active.token
+        token
       );
       
       localStorage.setItem('auravault_last_sync_time', now.toString());
 
       // Silently clean up older backups
       try {
-        const filesList = await gdrive.listFiles(active.token);
+        const filesList = await gdrive.listFiles(token);
         const backupFiles = filesList.filter(f => f.name.startsWith('auravault_db_backup_'));
         if (backupFiles.length > 3) {
           backupFiles.sort((a, b) => b.name.localeCompare(a.name));
           const toDelete = backupFiles.slice(2);
           for (const f of toDelete) {
-            await gdrive.deleteFile(f.id, active.token);
+            await gdrive.deleteFile(f.id, token);
           }
         }
       } catch (err) {
@@ -490,9 +546,10 @@ function App() {
       }, 100);
 
       try {
+        const token = await getOrRefreshToken(targetDrive.email);
         const blob = await gdrive.downloadFile(
           file.googleFileId, 
-          targetDrive.token, 
+          token, 
           (pct) => {
             if (pct > currentProgress) {
               currentProgress = pct;
@@ -554,9 +611,10 @@ function App() {
           }, 100);
 
           try {
+            const token = await getOrRefreshToken(activeDrive.email);
             googleFileId = await gdrive.uploadFile(
               { name, type, blob: fileBlob },
-              activeDrive.token,
+              token,
               (pct) => {
                 if (pct > currentProgress) {
                   currentProgress = pct;
@@ -570,7 +628,7 @@ function App() {
             await new Promise(resolve => setTimeout(resolve, 300));
 
             // Fetch updated real quota details in background
-            gdrive.fetchAccountDetails(activeDrive.token).then(details => {
+            gdrive.fetchAccountDetails(token).then(details => {
               setConnectedDrives(prev => 
                 prev.map(d => d.email === activeDrive.email 
                   ? { ...d, quotaUsage: details.usage, quotaLimit: details.limit } 
@@ -634,7 +692,8 @@ function App() {
       if (targetDrive) {
         try {
           setSyncStatus('syncing');
-          await gdrive.deleteFile(file.googleFileId, targetDrive.token);
+          const token = await getOrRefreshToken(targetDrive.email);
+          await gdrive.deleteFile(file.googleFileId, token);
           
           // Deduct quota
           setConnectedDrives(prev => 
@@ -907,8 +966,9 @@ function App() {
           }
           setSyncStatus('syncing');
           try {
+            const token = await getOrRefreshToken(activeDrive.email);
             // 1. Fetch remote files list to check for newer remote updates
-            const filesList = await gdrive.listFiles(activeDrive.token);
+            const filesList = await gdrive.listFiles(token);
             const backupFiles = filesList.filter(f => f.name.startsWith('auravault_db_backup_'));
             
             let lastSyncTime = parseInt(localStorage.getItem('auravault_last_sync_time') || '0', 10);
@@ -924,7 +984,7 @@ function App() {
 
               if (remoteTime > lastSyncTime) {
                 addToast('Newer updates found on Google Drive. Pulling changes...', 'info');
-                const blob = await gdrive.downloadFile(latestBackup.id, activeDrive.token);
+                const blob = await gdrive.downloadFile(latestBackup.id, token);
                 const text = await blob.text();
                 const success = await handleImportBackup(text);
                 if (success) {
@@ -944,7 +1004,7 @@ function App() {
                 type: 'application/json', 
                 blob: new Blob([payload], { type: 'application/json' }) 
               },
-              activeDrive.token
+              token
             );
             
             localStorage.setItem('auravault_last_sync_time', now.toString());
@@ -961,7 +1021,7 @@ function App() {
               const toDelete = backupFiles.slice(2); // Keep the 2 latest
               for (const f of toDelete) {
                 try {
-                  await gdrive.deleteFile(f.id, activeDrive.token);
+                  await gdrive.deleteFile(f.id, token);
                 } catch (e) {
                   console.error('Failed to clean up old backup file:', e);
                 }
