@@ -6,7 +6,8 @@ import {
   Share2, 
   RefreshCw, 
   ShieldAlert,
-  Users
+  Users,
+  Download
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -16,6 +17,8 @@ interface SidebarProps {
   onTriggerSync: () => void;
   mobileOpen?: boolean;
   onCloseMobile?: () => void;
+  showInstallBtn?: boolean;
+  onInstallPWA?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ 
@@ -24,7 +27,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   syncStatus,
   onTriggerSync,
   mobileOpen,
-  onCloseMobile
+  onCloseMobile,
+  showInstallBtn,
+  onInstallPWA
 }) => {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -82,6 +87,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           );
         })}
       </nav>
+
+      {showInstallBtn && (
+        <button className="btn btn-primary install-pwa-btn" onClick={onInstallPWA}>
+          <Download size={14} />
+          <span>Download App</span>
+        </button>
+      )}
 
       <div className="sidebar-security-badge glass">
         <div className="security-icon-wrapper">
@@ -211,6 +223,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
             from { opacity: 0; }
             to { opacity: 1; }
           }
+        }
+
+        .install-pwa-btn {
+          width: 100%;
+          margin-bottom: 16px;
+          font-size: 13px;
+          padding: 10px 14px;
+          background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-purple) 100%);
+          border: none;
+          box-shadow: 0 4px 15px rgba(6, 182, 212, 0.25);
+        }
+        .install-pwa-btn:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 6px 20px rgba(6, 182, 212, 0.4);
+        }
       `}</style>
       </aside>
     </>

@@ -60,6 +60,46 @@ function App() {
   // Get active upload target drive
   const activeDrive = connectedDrives.find(d => d.isActive) || null;
   
+  // PWA Install Prompts
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallBtn, setShowInstallBtn] = useState(false);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      // Only show install button if not already running in standalone app mode
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
+      if (!isStandalone) {
+        setShowInstallBtn(true);
+      }
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    const handleAppInstalled = () => {
+      setShowInstallBtn(false);
+      setDeferredPrompt(null);
+      addToast('AuraVault has been installed successfully!', 'success');
+    };
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt' as any, handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallPWA = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setShowInstallBtn(false);
+      setDeferredPrompt(null);
+    }
+  };
+
   // Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -503,6 +543,8 @@ function App() {
         syncStatus={syncStatus}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
+        showInstallBtn={showInstallBtn}
+        onInstallPWA={handleInstallPWA}
         onTriggerSync={async () => {
           if (!activeDrive) {
             setActiveTab('sync');

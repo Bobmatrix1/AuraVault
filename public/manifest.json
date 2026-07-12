@@ -1,0 +1,24 @@
+{
+  "name": "AuraVault Secure Team Cloud",
+  "short_name": "AuraVault",
+  "description": "Secure client-side digital headquarters for safeguarding company credentials, passwords, social handles, and team documents.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07080d",
+  "theme_color": "#a855f7",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
