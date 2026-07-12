@@ -608,6 +608,11 @@ export const SocialHandles: React.FC<SocialHandlesProps> = ({
         .input-with-prefix {
           padding-left: 30px;
         }
+        @media (max-width: 768px) {
+          .social-grid {
+            grid-template-columns: 1fr;
+          }
+        }
       `}</style>
     </div>
   );

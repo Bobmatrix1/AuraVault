@@ -922,6 +922,11 @@ export const CredentialVault: React.FC<CredentialVaultProps> = ({
           width: 100%;
           margin-top: 8px;
         }
+        @media (max-width: 768px) {
+          .credentials-grid {
+            grid-template-columns: 1fr;
+          }
+        }
       `}</style>
     </div>
   );
