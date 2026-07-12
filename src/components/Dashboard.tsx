@@ -139,13 +139,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <span className="current-storage">{totalSizeLabel}</span>
                   <span className="limit-storage"> of {storageLimitLabel} used</span>
                 </div>
-                <span className="storage-percentage-text">{storagePercentage.toFixed(1)}%</span>
+                <span className="storage-percentage-text">
+                  {storagePercentage > 0 && storagePercentage < 0.1 ? '0.1' : storagePercentage.toFixed(1)}%
+                </span>
               </div>
               <div className="progress-container" style={{ height: '10px' }}>
                 <div 
                   className="progress-bar" 
                   style={{ 
                     width: `${storagePercentage}%`,
+                    minWidth: storagePercentage > 0 ? '4px' : '0px',
                     background: 'linear-gradient(90deg, var(--accent-cyan) 0%, var(--accent-purple) 100%)' 
                   }}
                 />

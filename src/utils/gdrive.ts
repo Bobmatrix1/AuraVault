@@ -27,11 +27,10 @@ export const gdrive = {
   // Fetch account quota and email
   async fetchAccountDetails(token: string, isDemo = false): Promise<{ email: string; limit: number; usage: number }> {
     if (isDemo || !isGCPConfigured()) {
-      // Return simulated values
       return {
-        email: `drive-vault-${Math.floor(Math.random() * 90 + 10)}@company.com`,
+        email: 'workspace-drive-demo@company.com',
         limit: 15 * 1024 * 1024 * 1024, // 15 GB
-        usage: Math.floor(Math.random() * 10 * 1024 * 1024 * 1024) // Random 0-10GB used
+        usage: 1.2 * 1024 * 1024 * 1024 // Stable mock usage (8.0% used)
       };
     }
 
@@ -90,8 +89,8 @@ export const gdrive = {
       const url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart${apiKey ? `&key=${apiKey}` : ''}`;
       
       const boundary = 'foo_bar_boundary';
-      const delimiter = `\n--${boundary}\n`;
-      const closeDelim = `\n--${boundary}--`;
+      const delimiter = `\r\n--${boundary}\r\n`;
+      const closeDelim = `\r\n--${boundary}--`;
 
       const metadata = {
         name: file.name,
@@ -99,19 +98,17 @@ export const gdrive = {
         parents: ['appDataFolder']
       };
 
-      const reader = new FileReader();
-      reader.onload = function() {
-        const rawData = reader.result as ArrayBuffer;
+      try {
+        const metadataPart = `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`;
+        const mediaPartHeader = `${delimiter}Content-Type: ${file.type}\r\n\r\n`;
         
-        // Construct multipart request manually so we can track XHR progress
-        const header = `${delimiter}Content-Type: application/json; charset=UTF-8\n\n${JSON.stringify(metadata)}\n${delimiter}Content-Type: ${file.type}\nContent-Transfer-Encoding: base64\n\n`;
-        
-        // Base64 encode file content
-        const base64Content = btoa(
-          new Uint8Array(rawData).reduce((data, byte) => data + String.fromCharCode(byte), '')
-        );
-        
-        const payload = header + base64Content + closeDelim;
+        // Construct binary multipart Blob
+        const multipartBlob = new Blob([
+          metadataPart,
+          mediaPartHeader,
+          file.blob,
+          closeDelim
+        ], { type: `multipart/related; boundary=${boundary}` });
 
         const xhr = new XMLHttpRequest();
         xhr.open('POST', url);
@@ -141,11 +138,10 @@ export const gdrive = {
         };
 
         xhr.onerror = () => reject(new Error('Network error during upload'));
-        xhr.send(payload);
-      };
-      
-      reader.onerror = () => reject(new Error('Failed to read upload file blob'));
-      reader.readAsArrayBuffer(file.blob);
+        xhr.send(multipartBlob);
+      } catch (err) {
+        reject(err);
+      }
     });
   },
 

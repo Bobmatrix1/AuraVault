@@ -474,6 +474,10 @@ body {
   }
 
   /* Modals */
+  .modal-overlay {
+    align-items: flex-start !important;
+    padding: 80px 16px 40px 16px !important;
+  }
   .modal-content {
     width: 94% !important;
     max-width: 500px !important;
@@ -539,13 +543,13 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(3, 4, 7, 0.7);
-  backdrop-filter: blur(8px);
-  z-index: 100;
+  background: rgba(3, 4, 7, 0.75);
+  backdrop-filter: blur(12px);
+  z-index: 11000;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 40px 20px;
+  padding: 24px;
   overflow-y: auto;
 }
 
@@ -770,6 +774,8 @@ body {
   text-align: center;
   line-height: 1.5;
   margin: 0;
+  word-break: break-all;
+  word-wrap: break-word;
 }
 
 @keyframes slideInUp {
