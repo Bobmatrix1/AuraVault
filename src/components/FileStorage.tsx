@@ -34,6 +34,57 @@ interface FileStorageProps {
   toast: (msg: string, type?: 'success' | 'info' | 'error') => void;
 }
 
+const ImageThumbnail: React.FC<{ file: VaultFile; onDownloadCloudFile: (file: VaultFile) => Promise<string> }> = ({ file, onDownloadCloudFile }) => {
+  const [src, setSrc] = React.useState<string>(file.dataUrl);
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (file.dataUrl) {
+      setSrc(file.dataUrl);
+      return;
+    }
+    if (file.googleFileId) {
+      let isMounted = true;
+      setLoading(true);
+      onDownloadCloudFile(file)
+        .then(url => {
+          if (isMounted) {
+            setSrc(url);
+          }
+        })
+        .catch(() => {
+          // Fallback to placeholder on failure
+        })
+        .finally(() => {
+          if (isMounted) {
+            setLoading(false);
+          }
+        });
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [file, onDownloadCloudFile]);
+
+  if (loading) {
+    return (
+      <div className="thumbnail-loading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <RefreshCw size={16} className="spin-icon" style={{ color: 'var(--accent-cyan)' }} />
+      </div>
+    );
+  }
+
+  if (!src) {
+    return (
+      <div className="file-icon-placeholder">
+        <ImageIcon size={32} style={{ color: 'var(--accent-pink)' }} />
+      </div>
+    );
+  }
+
+  return <img src={src} alt={file.name} className="image-thumbnail" />;
+};
+
 export const FileStorage: React.FC<FileStorageProps> = ({
   files,
   folders,
@@ -332,7 +383,7 @@ export const FileStorage: React.FC<FileStorageProps> = ({
                 <div key={file.id} className="file-card glass glass-hover">
                   <div className="file-preview-area" onClick={() => handleOpenPreview(file)}>
                     {file.type.startsWith('image/') ? (
-                      <img src={file.dataUrl} alt={file.name} className="image-thumbnail" />
+                      <ImageThumbnail file={file} onDownloadCloudFile={onDownloadCloudFile} />
                     ) : (
                       <div className="file-icon-placeholder">
                         {getFileIcon(file.type, file.name)}

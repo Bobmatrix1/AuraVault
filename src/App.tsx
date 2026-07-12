@@ -24,6 +24,44 @@ interface Toast {
   type: 'success' | 'info' | 'error';
 }
 
+// Create a lightweight, downscaled JPG thumbnail from Base64 dataUrl for local DB cache
+const createThumbnail = (dataUrl: string, maxWidth = 150, maxHeight = 150): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = dataUrl;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+      } else {
+        if (height > maxHeight) {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.6)); // 0.6 quality is extremely lightweight!
+      } else {
+        resolve('');
+      }
+    };
+    img.onerror = () => {
+      resolve('');
+    };
+  });
+};
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -250,14 +288,27 @@ function App() {
       }
     }
 
+    let finalDataUrl = dataUrl;
+    if (googleFileId && !activeDrive?.isDemo) {
+      if (type.startsWith('image/')) {
+        try {
+          finalDataUrl = await createThumbnail(dataUrl);
+        } catch (e) {
+          finalDataUrl = '';
+        }
+      } else {
+        finalDataUrl = '';
+      }
+    }
+
     const newFile: VaultFile = {
       id: 'file_' + Math.random().toString(36).substr(2, 9),
       name,
       size,
       type,
-      // For real cloud files, we save empty dataUrl to preserve local IndexedDB storage.
+      // For real cloud files, we save a lightweight thumbnail dataUrl.
       // For demo mode simulation files, we keep the Base64 in memory so previews work offline.
-      dataUrl: (googleFileId && !activeDrive?.isDemo) ? '' : dataUrl,
+      dataUrl: finalDataUrl,
       folderId,
       createdAt: Date.now(),
       googleFileId,
