@@ -405,30 +405,45 @@ export const VaultLock: React.FC<VaultLockProps> = ({ onUnlock }) => {
           cursor: pointer;
           transition: all 0.15s ease;
         }
-        .keypad-btn:hover {
-          background: rgba(168, 85, 247, 0.1);
-          border-color: rgba(168, 85, 247, 0.3);
-          color: white;
-          transform: scale(1.05);
+        @media (hover: hover) {
+          .keypad-btn:hover {
+            background: rgba(168, 85, 247, 0.1);
+            border-color: rgba(168, 85, 247, 0.3);
+            color: white;
+            transform: scale(1.05);
+          }
+          .btn-clear:hover {
+            background: rgba(244, 63, 94, 0.1);
+            border-color: rgba(244, 63, 94, 0.3);
+          }
+          .btn-enter:hover {
+            background: rgba(16, 185, 129, 0.1);
+            border-color: rgba(16, 185, 129, 0.3);
+          }
         }
         .keypad-btn:active {
+          background: rgba(168, 85, 247, 0.2);
+          border-color: rgba(168, 85, 247, 0.5);
+          color: white;
           transform: scale(0.95);
         }
         .btn-clear {
           color: var(--accent-red);
           border-color: rgba(244, 63, 94, 0.15);
         }
-        .btn-clear:hover {
-          background: rgba(244, 63, 94, 0.1);
-          border-color: rgba(244, 63, 94, 0.3);
+        .btn-clear:active {
+          background: rgba(244, 63, 94, 0.2);
+          border-color: rgba(244, 63, 94, 0.5);
+          transform: scale(0.95);
         }
         .btn-enter {
           color: var(--accent-green);
           border-color: rgba(16, 185, 129, 0.15);
         }
-        .btn-enter:hover {
-          background: rgba(16, 185, 129, 0.1);
-          border-color: rgba(16, 185, 129, 0.3);
+        .btn-enter:active {
+          background: rgba(16, 185, 129, 0.2);
+          border-color: rgba(16, 185, 129, 0.5);
+          transform: scale(0.95);
         }
 
         .unlock-icon-spin {
