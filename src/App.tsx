@@ -207,11 +207,25 @@ function App() {
     return copy;
   };
 
+  const sanitizeForFirestore = (obj: any): any => {
+    if (obj === null || obj === undefined) return null;
+    const copy = { ...obj };
+    Object.keys(copy).forEach(key => {
+      if (copy[key] === undefined) {
+        delete copy[key];
+      } else if (copy[key] !== null && typeof copy[key] === 'object' && !Array.isArray(copy[key])) {
+        copy[key] = sanitizeForFirestore(copy[key]);
+      }
+    });
+    return copy;
+  };
+
   const writeData = async (storeName: string, id: string, docData: any) => {
     if (db_firestore) {
       try {
         const encrypted = await encryptDoc(storeName, docData);
-        await setDoc(doc(db_firestore!, storeName, id), encrypted);
+        const sanitized = sanitizeForFirestore(encrypted);
+        await setDoc(doc(db_firestore!, storeName, id), sanitized);
       } catch (err) {
         console.error(`Failed to write to Firestore collection "${storeName}":`, err);
         await db.put(storeName as any, docData);
