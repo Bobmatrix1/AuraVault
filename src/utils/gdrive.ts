@@ -25,13 +25,9 @@ const GDRIVE_DOWNLOAD_URL = (fileId: string) => `https://www.googleapis.com/driv
 
 export const gdrive = {
   // Fetch account quota and email
-  async fetchAccountDetails(token: string, isDemo = false): Promise<{ email: string; limit: number; usage: number }> {
-    if (isDemo || !isGCPConfigured()) {
-      return {
-        email: 'workspace-drive-demo@company.com',
-        limit: 15 * 1024 * 1024 * 1024, // 15 GB
-        usage: 1.2 * 1024 * 1024 * 1024 // Stable mock usage (8.0% used)
-      };
+  async fetchAccountDetails(token: string): Promise<{ email: string; limit: number; usage: number }> {
+    if (!isGCPConfigured()) {
+      throw new Error('Google Cloud Platform configurations are missing');
     }
 
     try {
@@ -66,22 +62,11 @@ export const gdrive = {
   // Upload file directly to Google Drive
   uploadFile(
     file: { name: string; type: string; blob: Blob }, 
-    token: string, 
-    isDemo = false,
+    token: string,
     onProgress?: (percent: number) => void
   ): Promise<string> {
-    if (isDemo || !isGCPConfigured()) {
-      return new Promise((resolve) => {
-        let pct = 0;
-        const interval = setInterval(() => {
-          pct += 10;
-          if (onProgress) onProgress(pct);
-          if (pct >= 100) {
-            clearInterval(interval);
-            resolve('gdrive_file_' + Math.random().toString(36).substr(2, 12));
-          }
-        }, 150);
-      });
+    if (!isGCPConfigured()) {
+      return Promise.reject(new Error('Google Cloud Platform configurations are missing'));
     }
 
     return new Promise((resolve, reject) => {
@@ -148,18 +133,11 @@ export const gdrive = {
   // Download file from Google Drive
   async downloadFile(
     fileId: string, 
-    token: string, 
-    isDemo = false,
+    token: string,
     onProgress?: (percent: number) => void
   ): Promise<Blob> {
-    if (isDemo || !isGCPConfigured() || fileId.startsWith('gdrive_file_')) {
-      if (onProgress) {
-        for (let pct = 0; pct <= 100; pct += 25) {
-          onProgress(pct);
-          await new Promise(r => setTimeout(r, 120));
-        }
-      }
-      throw new Error('DEMO_MODE_FALLBACK');
+    if (!isGCPConfigured()) {
+      throw new Error('Google Cloud Platform configurations are missing');
     }
 
     const apiKey = localStorage.getItem('gdrive_api_key') || import.meta.env.VITE_GCP_API_KEY || '';
@@ -210,11 +188,8 @@ export const gdrive = {
   },
 
   // Delete file from Google Drive
-  async deleteFile(fileId: string, token: string, isDemo = false): Promise<void> {
-    if (isDemo || !isGCPConfigured() || fileId.startsWith('gdrive_file_')) {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      return;
-    }
+  async deleteFile(fileId: string, token: string): Promise<void> {
+    if (!isGCPConfigured()) return;
 
     const response = await fetch(GDRIVE_FILE_URL(fileId), {
       method: 'DELETE',
@@ -227,10 +202,8 @@ export const gdrive = {
   },
 
   // List files in the Google Drive appDataFolder
-  async listFiles(token: string, isDemo = false): Promise<any[]> {
-    if (isDemo || !isGCPConfigured()) {
-      return [];
-    }
+  async listFiles(token: string): Promise<any[]> {
+    if (!isGCPConfigured()) return [];
 
     try {
       const apiKey = localStorage.getItem('gdrive_api_key') || (import.meta.env.VITE_GCP_API_KEY || '');

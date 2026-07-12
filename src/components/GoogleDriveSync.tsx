@@ -20,7 +20,7 @@ declare global {
 
 interface GoogleDriveSyncProps {
   connectedDrives: GDriveAccount[];
-  onLinkDrive: (email: string, token: string, limit: number, usage: number, isDemo?: boolean) => void;
+  onLinkDrive: (email: string, token: string, limit: number, usage: number) => void;
   onDisconnectDrive: (email: string) => void;
   onSetActiveDrive: (email: string) => void;
   toast: (msg: string, type?: 'success' | 'info' | 'error') => void;
@@ -47,12 +47,14 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
 
   // Format bytes helper
   const formatStorage = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
     const GB = 1024 * 1024 * 1024;
-    if (bytes >= GB) {
-      return `${(bytes / GB).toFixed(2)} GB`;
-    }
     const MB = 1024 * 1024;
-    return `${(bytes / MB).toFixed(1)} MB`;
+    const KB = 1024;
+    if (bytes >= GB) return `${(bytes / GB).toFixed(2)} GB`;
+    if (bytes >= MB) return `${(bytes / MB).toFixed(2)} MB`;
+    if (bytes >= KB) return `${(bytes / KB).toFixed(1)} KB`;
+    return `${bytes} Bytes`;
   };
 
   // Save GCP configuration
@@ -87,7 +89,7 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
     toast('Connecting to Google Drive API...', 'info');
 
     try {
-      const details = await gdrive.fetchAccountDetails(customToken.trim(), false);
+      const details = await gdrive.fetchAccountDetails(customToken.trim());
       
       // Check if already connected
       if (connectedDrives.some(d => d.email.toLowerCase() === details.email.toLowerCase())) {
@@ -100,8 +102,7 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
         details.email,
         customToken.trim(),
         details.limit,
-        details.usage,
-        false // Not a demo
+        details.usage
       );
       setCustomToken('');
       setShowTokenInput(false);
@@ -164,7 +165,7 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
           toast('Fetching account profile and storage quotas...', 'info');
 
           try {
-            const details = await gdrive.fetchAccountDetails(accessToken, false);
+            const details = await gdrive.fetchAccountDetails(accessToken);
 
             if (connectedDrives.some(d => d.email.toLowerCase() === details.email.toLowerCase())) {
               toast(`Drive account (${details.email}) is already linked.`, 'info');
@@ -172,7 +173,7 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
               return;
             }
 
-            onLinkDrive(details.email, accessToken, details.limit, details.usage, false);
+            onLinkDrive(details.email, accessToken, details.limit, details.usage);
             toast(`Successfully linked Google Drive: ${details.email}`, 'success');
             setShowTokenInput(false);
           } catch (err) {
@@ -189,33 +190,6 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
       setIsConnecting(false);
       setShowTokenInput(true); // show manual entry fallback
     }
-  };
-
-  // Simulate Linking a Demo Drive Account (for sandbox preview)
-  const handleConnectDemoDrive = async () => {
-    setIsConnecting(true);
-    toast('Opening Google Accounts Consent (Simulation)...', 'info');
-
-    setTimeout(() => {
-      // Create random demo email to show multi-drive functionality
-      const names = ['hq-vault', 'design-archive', 'finance-drives', 'marketing-backup'];
-      const chosen = names[Math.floor(Math.random() * names.length)];
-      const email = `${chosen}@company.com`;
-
-      if (connectedDrives.some(d => d.email.toLowerCase() === email.toLowerCase())) {
-        toast(`Account ${email} is already connected`, 'error');
-        setIsConnecting(false);
-        return;
-      }
-
-      // Generate random mock quota usage (e.g. 1.2GB to 14.5GB used)
-      const limit = 15 * 1024 * 1024 * 1024; // 15 GB
-      const usage = Math.floor((1.5 + Math.random() * 12) * 1024 * 1024 * 1024);
-
-      onLinkDrive(email, 'demo_token_' + Math.random().toString(36).substr(2, 6), limit, usage, true);
-      setIsConnecting(false);
-      toast(`Successfully linked Demo Google Drive: ${email}`, 'success');
-    }, 1200);
   };
 
   return (
@@ -250,14 +224,21 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
                       <span className="limit-storage"> of {formatStorage(activeDrive.quotaLimit)} used</span>
                     </div>
                     <span className="storage-percentage-text" style={{ color: 'var(--accent-cyan)' }}>
-                      {((activeDrive.quotaUsage / activeDrive.quotaLimit) * 100).toFixed(1)}%
+                      {(() => {
+                        const pct = (activeDrive.quotaUsage / activeDrive.quotaLimit) * 100;
+                        if (pct === 0) return '0.0%';
+                        if (pct < 0.01) return `${pct.toFixed(3)}%`;
+                        if (pct < 0.1) return `${pct.toFixed(2)}%`;
+                        return `${pct.toFixed(1)}%`;
+                      })()}
                     </span>
                   </div>
                   <div className="progress-container" style={{ height: '8px' }}>
                     <div 
                       className="progress-bar" 
                       style={{ 
-                        width: `${(activeDrive.quotaUsage / activeDrive.quotaLimit) * 100}%`,
+                        width: `${Math.min(100, (activeDrive.quotaUsage / activeDrive.quotaLimit) * 100)}%`,
+                        minWidth: activeDrive.quotaUsage > 0 ? '4px' : '0px',
                         background: 'linear-gradient(90deg, var(--accent-cyan) 0%, #0ea5e9 100%)' 
                       }}
                     />
@@ -281,10 +262,7 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
               <h3>Linked Accounts ({connectedDrives.length})</h3>
               
               <div className="account-actions-flex">
-                <button className="btn btn-secondary btn-sm" onClick={handleConnectDemoDrive} disabled={isConnecting}>
-                  <Plus size={12} />
-                  <span>Connect Demo Drive</span>
-                </button>
+                {/* Link Google OAuth */}
                 
                 <button 
                   className="btn btn-primary btn-sm" 

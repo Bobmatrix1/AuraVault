@@ -287,10 +287,10 @@ function App() {
   };
 
   // Pull backup from Google Drive and restore database
-  const triggerPullSync = async (token: string, isDemo = false) => {
+  const triggerPullSync = async (token: string) => {
     try {
       setSyncStatus('syncing');
-      const filesList = await gdrive.listFiles(token, isDemo);
+      const filesList = await gdrive.listFiles(token);
       if (filesList && filesList.length > 0) {
         const backupFiles = filesList.filter(f => f.name.startsWith('auravault_db_backup_'));
         if (backupFiles.length > 0) {
@@ -303,7 +303,7 @@ function App() {
           const remoteTime = match ? parseInt(match[1], 10) : 0;
           
           addToast('Found database backup on Google Drive. Syncing...', 'info');
-          const blob = await gdrive.downloadFile(latestBackup.id, token, isDemo);
+          const blob = await gdrive.downloadFile(latestBackup.id, token);
           const text = await blob.text();
           
           const success = await handleImportBackup(text);
@@ -337,21 +337,20 @@ function App() {
           type: 'application/json', 
           blob: new Blob([payload], { type: 'application/json' }) 
         },
-        active.token,
-        active.isDemo
+        active.token
       );
       
       localStorage.setItem('auravault_last_sync_time', now.toString());
 
       // Silently clean up older backups
       try {
-        const filesList = await gdrive.listFiles(active.token, active.isDemo);
+        const filesList = await gdrive.listFiles(active.token);
         const backupFiles = filesList.filter(f => f.name.startsWith('auravault_db_backup_'));
         if (backupFiles.length > 3) {
           backupFiles.sort((a, b) => b.name.localeCompare(a.name));
           const toDelete = backupFiles.slice(2);
           for (const f of toDelete) {
-            await gdrive.deleteFile(f.id, active.token, active.isDemo);
+            await gdrive.deleteFile(f.id, active.token);
           }
         }
       } catch (err) {
@@ -365,7 +364,7 @@ function App() {
   };
 
   // --- GOOGLE DRIVE MULTI-ACCOUNT MANAGEMENT ---
-  const handleLinkDrive = (email: string, token: string, limit: number, usage: number, isDemo = false) => {
+  const handleLinkDrive = (email: string, token: string, limit: number, usage: number) => {
     setConnectedDrives(prev => {
       // Set any other accounts as inactive
       const updated = prev.map(d => ({ ...d, isActive: false }));
@@ -376,13 +375,12 @@ function App() {
         expiresAt: Date.now() + 3600 * 1000,
         quotaLimit: limit,
         quotaUsage: usage,
-        isActive: true,
-        isDemo
+        isActive: true
       });
       return updated;
     });
 
-    triggerPullSync(token, isDemo);
+    triggerPullSync(token);
   };
 
   const handleDisconnectDrive = (email: string) => {
@@ -435,15 +433,14 @@ function App() {
           const token = tokenData.access_token;
           
           // Fetch quota and email details
-          const details = await gdrive.fetchAccountDetails(token, false);
+          const details = await gdrive.fetchAccountDetails(token);
           
           // Link this master drive automatically
           handleLinkDrive(
             details.email,
             token,
             details.limit,
-            details.usage,
-            false // Not a demo
+            details.usage
           );
         } catch (err) {
           console.error('Auto-connect master Google Drive failed:', err);
@@ -472,23 +469,36 @@ function App() {
       setTransferFileName(file.name);
       setTransferProgress(0);
 
-      const blob = await gdrive.downloadFile(
-        file.googleFileId, 
-        targetDrive.token, 
-        targetDrive.isDemo,
-        (pct) => setTransferProgress(pct)
-      );
+      let currentProgress = 0;
+      const progressInterval = setInterval(() => {
+        currentProgress += Math.max(1, Math.round((95 - currentProgress) * 0.15));
+        setTransferProgress(currentProgress);
+      }, 100);
 
-      setTransferProgress(null);
-      setTransferType(null);
-      return URL.createObjectURL(blob);
-    } catch (err: any) {
-      setTransferProgress(null);
-      setTransferType(null);
-      if (err.message === 'DEMO_MODE_FALLBACK') {
-        // Fall back to local Base64 cache kept for simulation files
-        return file.dataUrl;
+      try {
+        const blob = await gdrive.downloadFile(
+          file.googleFileId, 
+          targetDrive.token, 
+          (pct) => {
+            if (pct > currentProgress) {
+              currentProgress = pct;
+              setTransferProgress(pct);
+            }
+          }
+        );
+
+        clearInterval(progressInterval);
+        setTransferProgress(100);
+        await new Promise(resolve => setTimeout(resolve, 300));
+        return URL.createObjectURL(blob);
+      } catch (dlErr) {
+        clearInterval(progressInterval);
+        throw dlErr;
+      } finally {
+        setTransferProgress(null);
+        setTransferType(null);
       }
+    } catch (err: any) {
       throw err;
     }
   };
@@ -523,25 +533,47 @@ function App() {
           setTransferFileName(name);
           setTransferProgress(0);
 
-          // Direct Google Drive Upload (rest/simulation)
-          googleFileId = await gdrive.uploadFile(
-            { name, type, blob: fileBlob },
-            activeDrive.token,
-            activeDrive.isDemo,
-            (pct) => setTransferProgress(pct)
-          );
-          
-          setTransferProgress(null);
-          setTransferType(null);
-          driveEmail = activeDrive.email;
+          let currentProgress = 0;
+          const progressInterval = setInterval(() => {
+            currentProgress += Math.max(1, Math.round((95 - currentProgress) * 0.15));
+            setTransferProgress(currentProgress);
+          }, 100);
 
-          // Increment local quota counter for display
-          setConnectedDrives(prev => 
-            prev.map(d => d.email === activeDrive.email 
-              ? { ...d, quotaUsage: d.quotaUsage + size } 
-              : d
-            )
-          );
+          try {
+            googleFileId = await gdrive.uploadFile(
+              { name, type, blob: fileBlob },
+              activeDrive.token,
+              (pct) => {
+                if (pct > currentProgress) {
+                  currentProgress = pct;
+                  setTransferProgress(pct);
+                }
+              }
+            );
+            
+            clearInterval(progressInterval);
+            setTransferProgress(100);
+            await new Promise(resolve => setTimeout(resolve, 300));
+
+            // Fetch updated real quota details in background
+            gdrive.fetchAccountDetails(activeDrive.token).then(details => {
+              setConnectedDrives(prev => 
+                prev.map(d => d.email === activeDrive.email 
+                  ? { ...d, quotaUsage: details.usage, quotaLimit: details.limit } 
+                  : d
+                )
+              );
+            }).catch(console.error);
+
+          } catch (uploadErr) {
+            clearInterval(progressInterval);
+            throw uploadErr;
+          } finally {
+            setTransferProgress(null);
+            setTransferType(null);
+          }
+
+          driveEmail = activeDrive.email;
         }
       } catch (err) {
         addToast('Drive upload failed, saving to local offline storage.', 'error');
@@ -588,7 +620,7 @@ function App() {
       if (targetDrive) {
         try {
           setSyncStatus('syncing');
-          await gdrive.deleteFile(file.googleFileId, targetDrive.token, targetDrive.isDemo);
+          await gdrive.deleteFile(file.googleFileId, targetDrive.token);
           
           // Deduct quota
           setConnectedDrives(prev => 
@@ -862,7 +894,7 @@ function App() {
           setSyncStatus('syncing');
           try {
             // 1. Fetch remote files list to check for newer remote updates
-            const filesList = await gdrive.listFiles(activeDrive.token, activeDrive.isDemo);
+            const filesList = await gdrive.listFiles(activeDrive.token);
             const backupFiles = filesList.filter(f => f.name.startsWith('auravault_db_backup_'));
             
             let lastSyncTime = parseInt(localStorage.getItem('auravault_last_sync_time') || '0', 10);
@@ -878,7 +910,7 @@ function App() {
 
               if (remoteTime > lastSyncTime) {
                 addToast('Newer updates found on Google Drive. Pulling changes...', 'info');
-                const blob = await gdrive.downloadFile(latestBackup.id, activeDrive.token, activeDrive.isDemo);
+                const blob = await gdrive.downloadFile(latestBackup.id, activeDrive.token);
                 const text = await blob.text();
                 const success = await handleImportBackup(text);
                 if (success) {
@@ -898,8 +930,7 @@ function App() {
                 type: 'application/json', 
                 blob: new Blob([payload], { type: 'application/json' }) 
               },
-              activeDrive.token,
-              activeDrive.isDemo
+              activeDrive.token
             );
             
             localStorage.setItem('auravault_last_sync_time', now.toString());
@@ -916,7 +947,7 @@ function App() {
               const toDelete = backupFiles.slice(2); // Keep the 2 latest
               for (const f of toDelete) {
                 try {
-                  await gdrive.deleteFile(f.id, activeDrive.token, activeDrive.isDemo);
+                  await gdrive.deleteFile(f.id, activeDrive.token);
                 } catch (e) {
                   console.error('Failed to clean up old backup file:', e);
                 }

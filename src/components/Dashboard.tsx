@@ -48,10 +48,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const GB = 1024 * 1024 * 1024;
   const MB = 1024 * 1024;
+  const KB = 1024;
 
   const formatUnits = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
     if (bytes >= GB) return `${(bytes / GB).toFixed(2)} GB`;
-    return `${(bytes / MB).toFixed(1)} MB`;
+    if (bytes >= MB) return `${(bytes / MB).toFixed(2)} MB`;
+    if (bytes >= KB) return `${(bytes / KB).toFixed(1)} KB`;
+    return `${bytes} Bytes`;
   };
 
   const totalSizeLabel = formatUnits(storageUsedBytes);
@@ -140,7 +144,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <span className="limit-storage"> of {storageLimitLabel} used</span>
                 </div>
                 <span className="storage-percentage-text">
-                  {storagePercentage > 0 && storagePercentage < 0.1 ? '0.1' : storagePercentage.toFixed(1)}%
+                  {(() => {
+                    if (storagePercentage === 0) return '0.0%';
+                    if (storagePercentage < 0.01) return `${storagePercentage.toFixed(3)}%`;
+                    if (storagePercentage < 0.1) return `${storagePercentage.toFixed(2)}%`;
+                    return `${storagePercentage.toFixed(1)}%`;
+                  })()}
                 </span>
               </div>
               <div className="progress-container" style={{ height: '10px' }}>
