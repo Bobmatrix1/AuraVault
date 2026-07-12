@@ -46,8 +46,11 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
               onCancel();
             }}
             style={{ 
-              background: 'linear-gradient(135deg, #f43f5e 0%, #be123c 100%)', 
+              background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', 
               border: 'none',
+              color: '#ffffff',
+              fontWeight: 600,
+              boxShadow: '0 4px 14px rgba(239, 68, 68, 0.4)',
               flex: 1,
               display: 'flex',
               alignItems: 'center',
