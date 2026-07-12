@@ -438,15 +438,29 @@ function App() {
     setConnectedDrives(prev => {
       // Set any other accounts as inactive
       const updated = prev.map(d => ({ ...d, isActive: false }));
-      // Insert new account and make it active
-      updated.push({
-        email,
-        token,
-        expiresAt: Date.now() + 3600 * 1000,
-        quotaLimit: limit,
-        quotaUsage: usage,
-        isActive: true
-      });
+      
+      const existingIdx = updated.findIndex(d => d.email.toLowerCase() === email.toLowerCase());
+      if (existingIdx > -1) {
+        // Update existing drive details in-place
+        updated[existingIdx] = {
+          ...updated[existingIdx],
+          token,
+          expiresAt: Date.now() + 3600 * 1000,
+          quotaLimit: limit,
+          quotaUsage: usage,
+          isActive: true
+        };
+      } else {
+        // Insert new account and make it active
+        updated.push({
+          email,
+          token,
+          expiresAt: Date.now() + 3600 * 1000,
+          quotaLimit: limit,
+          quotaUsage: usage,
+          isActive: true
+        });
+      }
       return updated;
     });
 
