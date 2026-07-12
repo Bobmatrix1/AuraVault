@@ -410,7 +410,7 @@ export const CredentialVault: React.FC<CredentialVaultProps> = ({
                           onClick={() => togglePasswordVisibility(cred.id)}
                           title={isPasswordVisible ? 'Hide Password' : 'Show Password'}
                         >
-                          {isPasswordVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                          {isPasswordVisible ? <Eye size={12} /> : <EyeOff size={12} />}
                         </button>
                         <button 
                           className="copy-field-btn"

@@ -6,6 +6,7 @@ import { CredentialVault } from './components/CredentialVault';
 import { SocialHandles } from './components/SocialHandles';
 import { GoogleDriveSync } from './components/GoogleDriveSync';
 import { VaultLock } from './components/VaultLock';
+import { FolderLock } from 'lucide-react';
 
 import { 
   db, 
@@ -25,6 +26,7 @@ interface Toast {
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
@@ -477,11 +479,30 @@ function App() {
         <div className="blob blob-3"></div>
       </div>
 
+      {/* Mobile Top Header Bar */}
+      <header className="mobile-top-bar glass">
+        <div className="mobile-logo">
+          <div className="avatar" style={{ background: 'linear-gradient(135deg, #a855f7 0%, #06b6d4 100%)', width: '28px', height: '28px' }}>
+            <FolderLock size={12} color="white" />
+          </div>
+          <span>AuraVault</span>
+        </div>
+        <button 
+          className="mobile-menu-toggle-btn"
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          aria-label="Toggle menu"
+        >
+          {mobileMenuOpen ? '✕' : '☰'}
+        </button>
+      </header>
+
       {/* Navigation Sidebar */}
       <Sidebar 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
         syncStatus={syncStatus}
+        mobileOpen={mobileMenuOpen}
+        onCloseMobile={() => setMobileMenuOpen(false)}
         onTriggerSync={async () => {
           if (!activeDrive) {
             setActiveTab('sync');

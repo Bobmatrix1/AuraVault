@@ -14,13 +14,17 @@ interface SidebarProps {
   setActiveTab: (tab: string) => void;
   syncStatus: 'idle' | 'syncing' | 'synced' | 'error';
   onTriggerSync: () => void;
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ 
   activeTab, 
   setActiveTab,
   syncStatus,
-  onTriggerSync
+  onTriggerSync,
+  mobileOpen,
+  onCloseMobile
 }) => {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -44,13 +48,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-logo">
-        <div className="avatar" style={{ background: 'linear-gradient(135deg, #a855f7 0%, #06b6d4 100%)' }}>
-          <FolderLock size={18} color="white" />
+    <>
+      {mobileOpen && (
+        <div className="sidebar-mobile-backdrop" onClick={onCloseMobile}></div>
+      )}
+      <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
+        <div className="sidebar-logo">
+          <div className="avatar" style={{ background: 'linear-gradient(135deg, #a855f7 0%, #06b6d4 100%)' }}>
+            <FolderLock size={18} color="white" />
+          </div>
+          <h1>AuraVault</h1>
+          {mobileOpen && (
+            <button className="mobile-close-sidebar-btn" onClick={onCloseMobile}>✕</button>
+          )}
         </div>
-        <h1>AuraVault</h1>
-      </div>
 
       <nav className="sidebar-nav">
         {navItems.map((item) => {
@@ -59,7 +70,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               key={item.id}
               className={`nav-item ${activeTab === item.id ? 'active' : ''}`}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => {
+                setActiveTab(item.id);
+                if (onCloseMobile) onCloseMobile();
+              }}
             >
               <Icon size={18} />
               <span>{item.label}</span>
@@ -148,7 +162,57 @@ export const Sidebar: React.FC<SidebarProps> = ({
           0%, 100% { opacity: 0.6; }
           50% { opacity: 1; }
         }
+
+        .mobile-close-sidebar-btn {
+          background: transparent;
+          border: none;
+          color: var(--text-secondary);
+          font-size: 18px;
+          cursor: pointer;
+          margin-left: auto;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 4px;
+        }
+        .mobile-close-sidebar-btn:hover {
+          color: var(--text-primary);
+        }
+
+        @media (max-width: 768px) {
+          .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: var(--sidebar-width);
+            height: 100vh;
+            transform: translateX(-100%);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 10005;
+            background: rgba(10, 11, 20, 0.96);
+            box-shadow: 5px 0 25px rgba(0, 0, 0, 0.5);
+            border-right: 1px solid var(--border-light);
+            border-bottom: none;
+            padding: 24px;
+          }
+          .sidebar.mobile-open {
+            transform: translateX(0);
+          }
+          .sidebar-mobile-backdrop {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            z-index: 10004;
+            animation: fadeIn 0.2s ease;
+          }
+          @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+          }
       `}</style>
-    </aside>
+      </aside>
+    </>
   );
 };

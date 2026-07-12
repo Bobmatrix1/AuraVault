@@ -255,7 +255,7 @@ export const SocialHandles: React.FC<SocialHandlesProps> = ({
                     </div>
                     <div className="pwd-actions">
                       <button className="copy-field-btn" onClick={() => togglePasswordVisibility(social.id)}>
-                        {isPasswordVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                        {isPasswordVisible ? <Eye size={12} /> : <EyeOff size={12} />}
                       </button>
                       <button className="copy-field-btn" onClick={() => handleCopy(social.password || '', social.id)}>
                         {copiedId === social.id ? (
@@ -544,6 +544,23 @@ export const SocialHandles: React.FC<SocialHandlesProps> = ({
         .pwd-actions {
           display: flex;
           gap: 4px;
+        }
+        .copy-field-btn {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--border-light);
+          color: var(--text-secondary);
+          padding: 6px;
+          border-radius: 6px;
+          cursor: pointer;
+          transition: all 0.2s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .copy-field-btn:hover {
+          background: rgba(255, 255, 255, 0.15);
+          color: var(--text-primary);
+          border-color: rgba(255, 255, 255, 0.25);
         }
 
         .social-notes-bubble {

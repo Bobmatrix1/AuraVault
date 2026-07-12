@@ -742,6 +742,12 @@ export const FileStorage: React.FC<FileStorageProps> = ({
           grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
           gap: 20px;
         }
+        @media (max-width: 768px) {
+          .files-grid {
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 12px;
+          }
+        }
         
         /* Folder Card */
         .folder-card {
