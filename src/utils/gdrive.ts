@@ -135,5 +135,28 @@ export const gdrive = {
     if (!response.ok && response.status !== 404) {
       throw new Error(`Failed to delete file from Google Drive: ${response.statusText}`);
     }
+  },
+
+  // List files in the Google Drive appDataFolder
+  async listFiles(token: string, isDemo = false): Promise<any[]> {
+    if (isDemo || !isGCPConfigured()) {
+      return [];
+    }
+
+    try {
+      const apiKey = localStorage.getItem('gdrive_api_key') || (import.meta.env.VITE_GCP_API_KEY || '');
+      const url = `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name+contains+%27auravault_db_backup_%27&orderBy=createdTime+desc&fields=files(id,name,mimeType,createdTime)${apiKey ? `&key=${apiKey}` : ''}`;
+      
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Failed to list files');
+
+      const data = await response.json();
+      return data.files || [];
+    } catch (err) {
+      console.error('Failed to list files from Google Drive:', err);
+      return [];
+    }
   }
 };

@@ -177,6 +177,42 @@ function App() {
     }, 3500);
   };
 
+  // Pull backup from Google Drive and restore database
+  const triggerPullSync = async (token: string, isDemo = false) => {
+    try {
+      setSyncStatus('syncing');
+      const filesList = await gdrive.listFiles(token, isDemo);
+      if (filesList && filesList.length > 0) {
+        const backupFiles = filesList.filter(f => f.name.startsWith('auravault_db_backup_'));
+        if (backupFiles.length > 0) {
+          // Sort by name descending
+          backupFiles.sort((a, b) => b.name.localeCompare(a.name));
+          const latestBackup = backupFiles[0];
+
+          // Extract timestamp from filename
+          const match = latestBackup.name.match(/auravault_db_backup_(\d+)\.json/);
+          const remoteTime = match ? parseInt(match[1], 10) : 0;
+          
+          addToast('Found database backup on Google Drive. Syncing...', 'info');
+          const blob = await gdrive.downloadFile(latestBackup.id, token, isDemo);
+          const text = await blob.text();
+          
+          const success = await handleImportBackup(text);
+          if (success) {
+            localStorage.setItem('auravault_last_sync_time', remoteTime.toString());
+            addToast('Vault database synchronized from Google Drive!', 'success');
+          } else {
+            addToast('Failed to restore database from backup file', 'error');
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to pull backup from Google Drive:', err);
+    } finally {
+      setSyncStatus('synced');
+    }
+  };
+
   // --- GOOGLE DRIVE MULTI-ACCOUNT MANAGEMENT ---
   const handleLinkDrive = (email: string, token: string, limit: number, usage: number, isDemo = false) => {
     setConnectedDrives(prev => {
@@ -194,6 +230,8 @@ function App() {
       });
       return updated;
     });
+
+    triggerPullSync(token, isDemo);
   };
 
   const handleDisconnectDrive = (email: string) => {
@@ -655,20 +693,70 @@ function App() {
           }
           setSyncStatus('syncing');
           try {
-            // Upload current database snapshot payload to active drive
+            // 1. Fetch remote files list to check for newer remote updates
+            const filesList = await gdrive.listFiles(activeDrive.token, activeDrive.isDemo);
+            const backupFiles = filesList.filter(f => f.name.startsWith('auravault_db_backup_'));
+            
+            let lastSyncTime = parseInt(localStorage.getItem('auravault_last_sync_time') || '0', 10);
+            let imported = false;
+
+            if (backupFiles.length > 0) {
+              backupFiles.sort((a, b) => b.name.localeCompare(a.name));
+              const latestBackup = backupFiles[0];
+              
+              // Extract timestamp from filename
+              const match = latestBackup.name.match(/auravault_db_backup_(\d+)\.json/);
+              const remoteTime = match ? parseInt(match[1], 10) : 0;
+
+              if (remoteTime > lastSyncTime) {
+                addToast('Newer updates found on Google Drive. Pulling changes...', 'info');
+                const blob = await gdrive.downloadFile(latestBackup.id, activeDrive.token, activeDrive.isDemo);
+                const text = await blob.text();
+                const success = await handleImportBackup(text);
+                if (success) {
+                  lastSyncTime = remoteTime;
+                  localStorage.setItem('auravault_last_sync_time', remoteTime.toString());
+                  imported = true;
+                }
+              }
+            }
+
+            // 2. Upload our latest state
+            const now = Date.now();
             const payload = handleExportBackup();
             await gdrive.uploadFile(
               { 
-                name: `auravault_db_backup_${Date.now()}.json`, 
+                name: `auravault_db_backup_${now}.json`, 
                 type: 'application/json', 
                 blob: new Blob([payload], { type: 'application/json' }) 
               },
               activeDrive.token,
               activeDrive.isDemo
             );
-            addToast('Vault database synchronized with Google Drive', 'success');
+            
+            localStorage.setItem('auravault_last_sync_time', now.toString());
+            addToast(
+              imported 
+                ? 'Vault database synchronized (remote pulled and local uploaded)' 
+                : 'Vault database uploaded to Google Drive (local up-to-date)', 
+              'success'
+            );
+
+            // 3. Clean up old backups to save space (keep only the 3 latest backups)
+            if (backupFiles.length > 3) {
+              // Delete oldest backup files
+              const toDelete = backupFiles.slice(2); // Keep the 2 latest
+              for (const f of toDelete) {
+                try {
+                  await gdrive.deleteFile(f.id, activeDrive.token, activeDrive.isDemo);
+                } catch (e) {
+                  console.error('Failed to clean up old backup file:', e);
+                }
+              }
+            }
           } catch (err) {
             addToast('Synchronization failed', 'error');
+            console.error(err);
           } finally {
             setSyncStatus('synced');
           }
