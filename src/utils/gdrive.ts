@@ -34,10 +34,16 @@ export const gdrive = {
     }
 
     try {
-      const response = await fetch(GDRIVE_ABOUT_URL, {
+      const apiKey = localStorage.getItem('gdrive_api_key') || '';
+      const url = apiKey ? `${GDRIVE_ABOUT_URL}&key=${apiKey}` : GDRIVE_ABOUT_URL;
+      const response = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (!response.ok) throw new Error('Failed to fetch Drive details');
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Google Drive API Error Details:', errorText);
+        throw new Error(`Failed to fetch Drive details: ${errorText}`);
+      }
       
       const data = await response.json();
       return {

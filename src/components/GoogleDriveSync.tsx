@@ -12,6 +12,12 @@ import {
 } from 'lucide-react';
 import { GDriveAccount, gdrive, isGCPConfigured } from '../utils/gdrive';
 
+declare global {
+  interface Window {
+    google?: any;
+  }
+}
+
 interface GoogleDriveSyncProps {
   connectedDrives: GDriveAccount[];
   onLinkDrive: (email: string, token: string, limit: number, usage: number, isDemo?: boolean) => void;
@@ -105,6 +111,84 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
       toast('Failed to authorize token. Check if token is expired.', 'error');
     } finally {
       setIsConnecting(false);
+    }
+  };
+
+  // Load Google Script
+  const loadGoogleScript = (): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (window.google?.accounts?.oauth2) {
+        resolve();
+        return;
+      }
+      const existingScript = document.getElementById('google-gsi-client');
+      if (existingScript) {
+        existingScript.onload = () => resolve();
+        return;
+      }
+      const script = document.createElement('script');
+      script.id = 'google-gsi-client';
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => resolve();
+      script.onerror = (err) => reject(err);
+      document.body.appendChild(script);
+    });
+  };
+
+  // Trigger Google Sign-In Popup
+  const handleGoogleOAuthLogin = async () => {
+    if (!clientId.trim()) {
+      toast('Please enter and save your GCP Client ID in the configuration panel first.', 'error');
+      setShowTokenInput(true); // Toggle manual input as fallback
+      return;
+    }
+
+    setIsConnecting(true);
+    toast('Opening Google Account Consent...', 'info');
+
+    try {
+      await loadGoogleScript();
+      
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId.trim(),
+        scope: 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive.file',
+        callback: async (tokenResponse: any) => {
+          if (tokenResponse.error) {
+            toast('Google Sign-In failed or was cancelled', 'error');
+            setIsConnecting(false);
+            return;
+          }
+
+          const accessToken = tokenResponse.access_token;
+          toast('Fetching account profile and storage quotas...', 'info');
+
+          try {
+            const details = await gdrive.fetchAccountDetails(accessToken, false);
+
+            if (connectedDrives.some(d => d.email.toLowerCase() === details.email.toLowerCase())) {
+              toast(`Drive account (${details.email}) is already linked.`, 'info');
+              setIsConnecting(false);
+              return;
+            }
+
+            onLinkDrive(details.email, accessToken, details.limit, details.usage, false);
+            toast(`Successfully linked Google Drive: ${details.email}`, 'success');
+            setShowTokenInput(false);
+          } catch (err) {
+            toast('Failed to fetch account info using Google token', 'error');
+          } finally {
+            setIsConnecting(false);
+          }
+        },
+      });
+
+      client.requestAccessToken();
+    } catch (err) {
+      toast('Failed to initialize Google login popup', 'error');
+      setIsConnecting(false);
+      setShowTokenInput(true); // show manual entry fallback
     }
   };
 
@@ -205,11 +289,11 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
                 
                 <button 
                   className="btn btn-primary btn-sm" 
-                  onClick={() => setShowTokenInput(!showTokenInput)} 
+                  onClick={handleGoogleOAuthLogin} 
                   disabled={isConnecting}
                 >
                   <Cloud size={12} />
-                  <span>{showTokenInput ? 'Hide OAuth Input' : 'Link Google OAuth'}</span>
+                  <span>Link Google OAuth</span>
                 </button>
               </div>
             </div>
@@ -233,7 +317,26 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
                 <p className="token-tip-text">
                   Paste a valid access token generated from your Google GCP OAuth Consent workflow.
                 </p>
+                <div style={{ textAlign: 'right', marginTop: '10px' }}>
+                  <span 
+                    onClick={() => setShowTokenInput(false)} 
+                    style={{ fontSize: '11px', color: 'var(--accent-red)', cursor: 'pointer', textDecoration: 'underline' }}
+                  >
+                    Cancel manual entry
+                  </span>
+                </div>
               </form>
+            )}
+
+            {!showTokenInput && (
+              <div style={{ padding: '0 24px 16px 24px', textAlign: 'right' }}>
+                <span 
+                  onClick={() => setShowTokenInput(true)} 
+                  style={{ fontSize: '11px', color: 'var(--text-muted)', cursor: 'pointer', textDecoration: 'underline' }}
+                >
+                  Manually paste OAuth Access Token instead
+                </span>
+              </div>
             )}
 
             {connectedDrives.length === 0 ? (
