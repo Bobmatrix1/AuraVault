@@ -35,6 +35,11 @@ self.addEventListener('activate', (e) => {
 
 // Fetch Event
 self.addEventListener('fetch', (e) => {
+  // Only handle GET requests directed to our own app origin (bypass Firestore & Google APIs)
+  if (e.request.method !== 'GET' || !e.request.url.startsWith(self.location.origin)) {
+    return;
+  }
+
   e.respondWith(
     fetch(e.request).catch(() => {
       return caches.match(e.request);
