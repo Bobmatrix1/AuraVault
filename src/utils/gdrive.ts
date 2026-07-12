@@ -10,9 +10,11 @@ export interface GDriveAccount {
   isDemo?: boolean;
 }
 
-// Check if GCP credentials are configured in localStorage
+// Check if GCP credentials are configured in localStorage or env variables
 export function isGCPConfigured(): boolean {
-  return !!(localStorage.getItem('gdrive_client_id') && localStorage.getItem('gdrive_api_key'));
+  const cid = localStorage.getItem('gdrive_client_id') || (import.meta.env.VITE_GCP_CLIENT_ID || '');
+  const akey = localStorage.getItem('gdrive_api_key') || (import.meta.env.VITE_GCP_API_KEY || '');
+  return !!(cid.trim() && akey.trim());
 }
 
 // Google Drive API endpoints
@@ -34,7 +36,7 @@ export const gdrive = {
     }
 
     try {
-      const apiKey = localStorage.getItem('gdrive_api_key') || '';
+      const apiKey = localStorage.getItem('gdrive_api_key') || (import.meta.env.VITE_GCP_API_KEY || '');
       const url = apiKey ? `${GDRIVE_ABOUT_URL}&key=${apiKey}` : GDRIVE_ABOUT_URL;
       const response = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` }

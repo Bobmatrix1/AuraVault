@@ -216,6 +216,57 @@ function App() {
     });
   };
 
+  // Master Drive auto-connection using environment refresh token on mount
+  useEffect(() => {
+    const cid = localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '';
+    const secret = import.meta.env.VITE_GCP_CLIENT_SECRET || '';
+    const refreshToken = import.meta.env.VITE_GCP_REFRESH_TOKEN || '';
+
+    if (cid && secret && refreshToken) {
+      const autoConnect = async () => {
+        try {
+          setSyncStatus('syncing');
+          const response = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              client_id: cid,
+              client_secret: secret,
+              refresh_token: refreshToken,
+              grant_type: 'refresh_token'
+            })
+          });
+          
+          if (!response.ok) {
+            console.error('Failed to auto-refresh master token');
+            return;
+          }
+          
+          const tokenData = await response.json();
+          const token = tokenData.access_token;
+          
+          // Fetch quota and email details
+          const details = await gdrive.fetchAccountDetails(token, false);
+          
+          // Link this master drive automatically
+          handleLinkDrive(
+            details.email,
+            token,
+            details.limit,
+            details.usage,
+            false // Not a demo
+          );
+        } catch (err) {
+          console.error('Auto-connect master Google Drive failed:', err);
+        } finally {
+          setSyncStatus('synced');
+        }
+      };
+
+      autoConnect();
+    }
+  }, []);
+
   // Direct cloud file downloader helper
   const handleDownloadCloudFile = async (file: VaultFile): Promise<string> => {
     if (!file.googleFileId || !file.driveEmail) {

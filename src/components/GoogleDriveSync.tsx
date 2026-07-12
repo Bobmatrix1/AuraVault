@@ -34,9 +34,9 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
   toast
 }) => {
   // GCP Credentials
-  const [clientId, setClientId] = useState(() => localStorage.getItem('gdrive_client_id') || '');
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('gdrive_api_key') || '');
-  const [isSaved, setIsSaved] = useState(() => !!(localStorage.getItem('gdrive_client_id') && localStorage.getItem('gdrive_api_key')));
+  const [clientId, setClientId] = useState(() => localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '');
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('gdrive_api_key') || import.meta.env.VITE_GCP_API_KEY || '');
+  const [isSaved, setIsSaved] = useState(() => !!((localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID) && (localStorage.getItem('gdrive_api_key') || import.meta.env.VITE_GCP_API_KEY)));
   
   // Custom manual token entry
   const [customToken, setCustomToken] = useState('');
