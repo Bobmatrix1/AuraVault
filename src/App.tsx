@@ -434,10 +434,10 @@ function App() {
   };
 
   // --- GOOGLE DRIVE MULTI-ACCOUNT MANAGEMENT ---
-  const handleLinkDrive = (email: string, token: string, limit: number, usage: number) => {
+  const handleLinkDrive = (email: string, token: string, limit: number, usage: number, makeActive = true) => {
     setConnectedDrives(prev => {
-      // Set any other accounts as inactive
-      const updated = prev.map(d => ({ ...d, isActive: false }));
+      // If forcing this drive to be active, set all other accounts as inactive
+      const updated = prev.map(d => makeActive ? { ...d, isActive: false } : d);
       
       const existingIdx = updated.findIndex(d => d.email.toLowerCase() === email.toLowerCase());
       if (existingIdx > -1) {
@@ -448,17 +448,18 @@ function App() {
           expiresAt: Date.now() + 3600 * 1000,
           quotaLimit: limit,
           quotaUsage: usage,
-          isActive: true
+          isActive: makeActive ? true : updated[existingIdx].isActive
         };
       } else {
-        // Insert new account and make it active
+        // Insert new account. Make it active only if requested or if there are no active drives yet
+        const hasActive = updated.some(d => d.isActive);
         updated.push({
           email,
           token,
           expiresAt: Date.now() + 3600 * 1000,
           quotaLimit: limit,
           quotaUsage: usage,
-          isActive: true
+          isActive: makeActive ? true : !hasActive
         });
       }
       return updated;
@@ -519,12 +520,13 @@ function App() {
           // Fetch quota and email details
           const details = await gdrive.fetchAccountDetails(token);
           
-          // Link this master drive automatically
+          // Link this master drive automatically in the background (respecting user active selections)
           handleLinkDrive(
             details.email,
             token,
             details.limit,
-            details.usage
+            details.usage,
+            false
           );
         } catch (err) {
           console.error('Auto-connect master Google Drive failed:', err);
