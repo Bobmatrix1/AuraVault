@@ -4,7 +4,7 @@ const ASSETS = [
   '/index.html',
   '/manifest.json',
   '/favicon.svg',
-  '/og-preview.png'
+  '/logo.jpeg'
 ];
 
 // Install Event
