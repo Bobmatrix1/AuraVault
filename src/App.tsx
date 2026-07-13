@@ -310,43 +310,45 @@ function App() {
       return drive.token;
     }
 
-    // Token has expired! Check if we have refresh credentials available
-    const cid = localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '';
-    const secret = import.meta.env.VITE_GCP_CLIENT_SECRET || '';
-    const refreshToken = import.meta.env.VITE_GCP_REFRESH_TOKEN || '';
+    // Token has expired! Check if we have refresh credentials available and it is the master drive
+    if (drive.isMaster) {
+      const cid = localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '';
+      const secret = import.meta.env.VITE_GCP_CLIENT_SECRET || '';
+      const refreshToken = import.meta.env.VITE_GCP_REFRESH_TOKEN || '';
 
-    if (cid && secret && refreshToken) {
-      try {
-        addToast('Google Drive session expired. Refreshing token...', 'info');
-        const response = await fetch('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            client_id: cid,
-            client_secret: secret,
-            refresh_token: refreshToken,
-            grant_type: 'refresh_token'
-          })
-        });
+      if (cid && secret && refreshToken) {
+        try {
+          addToast('Google Drive session expired. Refreshing token...', 'info');
+          const response = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              client_id: cid,
+              client_secret: secret,
+              refresh_token: refreshToken,
+              grant_type: 'refresh_token'
+            })
+          });
 
-        if (response.ok) {
-          const data = await response.json();
-          const newToken = data.access_token;
-          const expiresAt = Date.now() + 3600 * 1000;
+          if (response.ok) {
+            const data = await response.json();
+            const newToken = data.access_token;
+            const expiresAt = Date.now() + 3600 * 1000;
 
-          // Update token in state
-          setConnectedDrives(prev => 
-            prev.map(d => d.email.toLowerCase() === email.toLowerCase()
-              ? { ...d, token: newToken, expiresAt }
-              : d
-            )
-          );
+            // Update token in state
+            setConnectedDrives(prev => 
+              prev.map(d => d.email.toLowerCase() === email.toLowerCase()
+                ? { ...d, token: newToken, expiresAt }
+                : d
+              )
+            );
 
-          addToast('Google Drive session refreshed successfully!', 'success');
-          return newToken;
+            addToast('Google Drive session refreshed successfully!', 'success');
+            return newToken;
+          }
+        } catch (err) {
+          console.error('Failed to refresh token:', err);
         }
-      } catch (err) {
-        console.error('Failed to refresh token:', err);
       }
     }
 
@@ -434,7 +436,7 @@ function App() {
   };
 
   // --- GOOGLE DRIVE MULTI-ACCOUNT MANAGEMENT ---
-  const handleLinkDrive = (email: string, token: string, limit: number, usage: number, makeActive = true) => {
+  const handleLinkDrive = (email: string, token: string, limit: number, usage: number, makeActive = true, isMaster = false) => {
     setConnectedDrives(prev => {
       // If forcing this drive to be active, set all other accounts as inactive
       const updated = prev.map(d => makeActive ? { ...d, isActive: false } : d);
@@ -448,7 +450,8 @@ function App() {
           expiresAt: Date.now() + 3600 * 1000,
           quotaLimit: limit,
           quotaUsage: usage,
-          isActive: makeActive ? true : updated[existingIdx].isActive
+          isActive: makeActive ? true : updated[existingIdx].isActive,
+          isMaster: isMaster || updated[existingIdx].isMaster
         };
       } else {
         // Insert new account. Make it active only if requested or if there are no active drives yet
@@ -459,13 +462,17 @@ function App() {
           expiresAt: Date.now() + 3600 * 1000,
           quotaLimit: limit,
           quotaUsage: usage,
-          isActive: makeActive ? true : !hasActive
+          isActive: makeActive ? true : !hasActive,
+          isMaster
         });
       }
       return updated;
     });
 
-    triggerPullSync(token);
+    const shouldSync = makeActive || !connectedDrives.some(d => d.isActive);
+    if (shouldSync) {
+      triggerPullSync(token);
+    }
   };
 
   const handleDisconnectDrive = (email: string) => {
@@ -526,7 +533,8 @@ function App() {
             token,
             details.limit,
             details.usage,
-            false
+            false,
+            true
           );
         } catch (err) {
           console.error('Auto-connect master Google Drive failed:', err);
@@ -536,6 +544,43 @@ function App() {
       };
 
       autoConnect();
+    }
+  }, []);
+
+  // Startup initialization: sync with active drive and refresh all quotas from APIs
+  useEffect(() => {
+    const initAppDrives = async () => {
+      const active = connectedDrives.find(d => d.isActive);
+      if (active) {
+        try {
+          const token = await getOrRefreshToken(active.email);
+          await triggerPullSync(token);
+        } catch (e) {
+          console.error('Failed to sync active drive on startup:', e);
+        }
+      }
+
+      // Refresh all connected drive quotas from API
+      for (const drive of connectedDrives) {
+        try {
+          if (drive.isMaster || Date.now() < drive.expiresAt) {
+            const token = await getOrRefreshToken(drive.email);
+            const details = await gdrive.fetchAccountDetails(token);
+            setConnectedDrives(prev => 
+              prev.map(d => d.email.toLowerCase() === drive.email.toLowerCase()
+                ? { ...d, quotaUsage: details.usage, quotaLimit: details.limit }
+                : d
+              )
+            );
+          }
+        } catch (e) {
+          console.error(`Failed to refresh quota for ${drive.email}:`, e);
+        }
+      }
+    };
+
+    if (connectedDrives.length > 0) {
+      initAppDrives();
     }
   }, []);
 
@@ -557,8 +602,10 @@ function App() {
 
       let currentProgress = 0;
       const progressInterval = setInterval(() => {
-        currentProgress += Math.max(1, Math.round((95 - currentProgress) * 0.15));
-        setTransferProgress(currentProgress);
+        if (currentProgress < 95) {
+          currentProgress += Math.max(1, Math.round((95 - currentProgress) * 0.15));
+          setTransferProgress(currentProgress);
+        }
       }, 100);
 
       try {
@@ -567,9 +614,10 @@ function App() {
           file.googleFileId, 
           token, 
           (pct) => {
-            if (pct > currentProgress) {
-              currentProgress = pct;
-              setTransferProgress(pct);
+            const capped = Math.min(99, pct);
+            if (capped > currentProgress) {
+              currentProgress = capped;
+              setTransferProgress(capped);
             }
           }
         );
@@ -622,8 +670,10 @@ function App() {
 
           let currentProgress = 0;
           const progressInterval = setInterval(() => {
-            currentProgress += Math.max(1, Math.round((95 - currentProgress) * 0.15));
-            setTransferProgress(currentProgress);
+            if (currentProgress < 95) {
+              currentProgress += Math.max(1, Math.round((95 - currentProgress) * 0.15));
+              setTransferProgress(currentProgress);
+            }
           }, 100);
 
           try {
@@ -632,9 +682,10 @@ function App() {
               { name, type, blob: fileBlob },
               token,
               (pct) => {
-                if (pct > currentProgress) {
-                  currentProgress = pct;
-                  setTransferProgress(pct);
+                const capped = Math.min(99, pct);
+                if (capped > currentProgress) {
+                  currentProgress = capped;
+                  setTransferProgress(capped);
                 }
               }
             );

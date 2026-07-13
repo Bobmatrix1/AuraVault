@@ -8,6 +8,7 @@ export interface GDriveAccount {
   quotaUsage: number; // in bytes
   isActive: boolean;
   isDemo?: boolean;
+  isMaster?: boolean;
 }
 
 // Check if GCP credentials are configured in localStorage or env variables
