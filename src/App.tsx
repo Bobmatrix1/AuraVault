@@ -310,35 +310,37 @@ function App() {
       return drive.token;
     }
 
-    // Token has expired! Check if we have refresh credentials available and it is the master drive
-    if (drive.isMaster) {
-      const cid = localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '';
-      const secret = import.meta.env.VITE_GCP_CLIENT_SECRET || '';
-      const refreshToken = import.meta.env.VITE_GCP_REFRESH_TOKEN || '';
+    // Token has expired! Check if we have refresh credentials available on Vercel or locally
+    const cid = localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '';
+    const secret = import.meta.env.VITE_GCP_CLIENT_SECRET || '';
+    const refreshToken = import.meta.env.VITE_GCP_REFRESH_TOKEN || '';
 
-      if (cid && secret && refreshToken) {
-        try {
-          addToast('Google Drive session expired. Refreshing token...', 'info');
-          const response = await fetch('https://oauth2.googleapis.com/token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-              client_id: cid,
-              client_secret: secret,
-              refresh_token: refreshToken,
-              grant_type: 'refresh_token'
-            })
-          });
+    if (cid && secret && refreshToken) {
+      try {
+        const response = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: cid,
+            client_secret: secret,
+            refresh_token: refreshToken,
+            grant_type: 'refresh_token'
+          })
+        });
 
-          if (response.ok) {
-            const data = await response.json();
-            const newToken = data.access_token;
+        if (response.ok) {
+          const data = await response.json();
+          const newToken = data.access_token;
+          
+          // Verify if this refreshed token belongs to the requested email address
+          const details = await gdrive.fetchAccountDetails(newToken);
+          if (details.email.toLowerCase() === email.toLowerCase()) {
             const expiresAt = Date.now() + 3600 * 1000;
 
             // Update token in state
             setConnectedDrives(prev => 
               prev.map(d => d.email.toLowerCase() === email.toLowerCase()
-                ? { ...d, token: newToken, expiresAt }
+                ? { ...d, token: newToken, expiresAt, quotaUsage: details.usage, quotaLimit: details.limit }
                 : d
               )
             );
@@ -346,9 +348,9 @@ function App() {
             addToast('Google Drive session refreshed successfully!', 'success');
             return newToken;
           }
-        } catch (err) {
-          console.error('Failed to refresh token:', err);
         }
+      } catch (err) {
+        console.error('Failed to silent refresh token:', err);
       }
     }
 
@@ -436,7 +438,7 @@ function App() {
   };
 
   // --- GOOGLE DRIVE MULTI-ACCOUNT MANAGEMENT ---
-  const handleLinkDrive = (email: string, token: string, limit: number, usage: number, makeActive = true, isMaster = false) => {
+  const handleLinkDrive = (email: string, token: string, limit: number, usage: number, makeActive = true) => {
     setConnectedDrives(prev => {
       // If forcing this drive to be active, set all other accounts as inactive
       const updated = prev.map(d => makeActive ? { ...d, isActive: false } : d);
@@ -450,8 +452,7 @@ function App() {
           expiresAt: Date.now() + 3600 * 1000,
           quotaLimit: limit,
           quotaUsage: usage,
-          isActive: makeActive ? true : updated[existingIdx].isActive,
-          isMaster: isMaster || updated[existingIdx].isMaster
+          isActive: makeActive ? true : updated[existingIdx].isActive
         };
       } else {
         // Insert new account. Make it active only if requested or if there are no active drives yet
@@ -462,8 +463,7 @@ function App() {
           expiresAt: Date.now() + 3600 * 1000,
           quotaLimit: limit,
           quotaUsage: usage,
-          isActive: makeActive ? true : !hasActive,
-          isMaster
+          isActive: makeActive ? true : !hasActive
         });
       }
       return updated;
@@ -495,59 +495,7 @@ function App() {
     });
   };
 
-  // Master Drive auto-connection using environment refresh token on mount
-  useEffect(() => {
-    const cid = localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '';
-    const secret = import.meta.env.VITE_GCP_CLIENT_SECRET || '';
-    const refreshToken = import.meta.env.VITE_GCP_REFRESH_TOKEN || '';
-
-    if (cid && secret && refreshToken) {
-      const autoConnect = async () => {
-        try {
-          setSyncStatus('syncing');
-          const response = await fetch('https://oauth2.googleapis.com/token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-              client_id: cid,
-              client_secret: secret,
-              refresh_token: refreshToken,
-              grant_type: 'refresh_token'
-            })
-          });
-          
-          if (!response.ok) {
-            console.error('Failed to auto-refresh master token');
-            return;
-          }
-          
-          const tokenData = await response.json();
-          const token = tokenData.access_token;
-          
-          // Fetch quota and email details
-          const details = await gdrive.fetchAccountDetails(token);
-          
-          // Link this master drive automatically in the background (respecting user active selections)
-          handleLinkDrive(
-            details.email,
-            token,
-            details.limit,
-            details.usage,
-            false,
-            true
-          );
-        } catch (err) {
-          console.error('Auto-connect master Google Drive failed:', err);
-        } finally {
-          setSyncStatus('synced');
-        }
-      };
-
-      autoConnect();
-    }
-  }, []);
-
-  // Startup initialization: sync with active drive and refresh all quotas from APIs
+  // Startup initialization: sync with active drive and refresh all quotas silently
   useEffect(() => {
     const initAppDrives = async () => {
       const active = connectedDrives.find(d => d.isActive);
@@ -560,21 +508,51 @@ function App() {
         }
       }
 
-      // Refresh all connected drive quotas from API
+      // Refresh all connected drive quotas silently
       for (const drive of connectedDrives) {
         try {
-          if (drive.isMaster || Date.now() < drive.expiresAt) {
-            const token = await getOrRefreshToken(drive.email);
+          const isValid = Date.now() < drive.expiresAt - 5 * 60 * 1000;
+          let token = '';
+          if (isValid) {
+            token = drive.token;
+          } else {
+            // Check if we can refresh it silently
+            const cid = localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '';
+            const secret = import.meta.env.VITE_GCP_CLIENT_SECRET || '';
+            const refreshToken = import.meta.env.VITE_GCP_REFRESH_TOKEN || '';
+            if (cid && secret && refreshToken) {
+              const response = await fetch('https://oauth2.googleapis.com/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                  client_id: cid,
+                  client_secret: secret,
+                  refresh_token: refreshToken,
+                  grant_type: 'refresh_token'
+                })
+              });
+              if (response.ok) {
+                const data = await response.json();
+                const newToken = data.access_token;
+                const details = await gdrive.fetchAccountDetails(newToken);
+                if (details.email.toLowerCase() === drive.email.toLowerCase()) {
+                  token = newToken;
+                }
+              }
+            }
+          }
+
+          if (token) {
             const details = await gdrive.fetchAccountDetails(token);
             setConnectedDrives(prev => 
               prev.map(d => d.email.toLowerCase() === drive.email.toLowerCase()
-                ? { ...d, quotaUsage: details.usage, quotaLimit: details.limit }
+                ? { ...d, token, quotaUsage: details.usage, quotaLimit: details.limit, expiresAt: Date.now() + 3600 * 1000 }
                 : d
               )
             );
           }
         } catch (e) {
-          console.error(`Failed to refresh quota for ${drive.email}:`, e);
+          console.error(`Failed to refresh quota silently for ${drive.email}:`, e);
         }
       }
     };
