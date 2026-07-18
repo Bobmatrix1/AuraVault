@@ -136,7 +136,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div className="layout-col main-col">
           {/* Storage Overview */}
           <div className="dashboard-section glass">
-            <h3>{isCloudActive ? `Google Drive Quota (${activeDrive.email})` : 'Local Vault Storage Allocation'}</h3>
+            <h3>{isCloudActive ? `Cloudflare R2 Storage (${activeDrive.email})` : 'Local Vault Storage Allocation'}</h3>
             <div className="storage-meter-container">
               <div className="storage-info-row">
                 <div>

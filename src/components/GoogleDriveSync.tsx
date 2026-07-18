@@ -524,6 +524,26 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
           border-radius: 8px;
           border: 1px solid var(--accent-cyan);
         }
+        .action-btn {
+          background: transparent;
+          border: none;
+          color: var(--text-muted);
+          cursor: pointer;
+          padding: 6px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s ease;
+        }
+        .action-btn:hover {
+          background: rgba(255, 255, 255, 0.05);
+          color: var(--text-primary);
+        }
+        .action-btn.delete:hover {
+          background: rgba(244, 63, 94, 0.15);
+          color: var(--accent-red);
+        }
         .info-tutorial-card {
           border-left: 4px solid var(--accent-cyan);
         }
