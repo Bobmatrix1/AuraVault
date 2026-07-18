@@ -120,7 +120,7 @@ export const FileStorage: React.FC<FileStorageProps> = ({
         const url = await onDownloadCloudFile(file);
         setPreviewUrl(url);
       } catch (err) {
-        toast('Failed to load file from Google Drive', 'error');
+        toast('Failed to load file from Cloudflare R2', 'error');
         setPreviewFile(null);
       } finally {
         setIsFetchingCloud(false);
@@ -189,7 +189,7 @@ export const FileStorage: React.FC<FileStorageProps> = ({
     setFileNote('');
 
     setIsUploading(true);
-    toast(`Uploading "${file.name}" to Google Drive...`, 'info');
+    toast(`Uploading "${file.name}" to Cloudflare R2...`, 'info');
 
     try {
       const reader = new FileReader();

@@ -36,7 +36,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'files', label: 'File Storage', icon: FolderLock },
     { id: 'credentials', label: 'Credentials Vault', icon: KeyRound },
     { id: 'socials', label: 'Social Handles', icon: Share2 },
-    { id: 'sync', label: 'Google Drive Sync', icon: RefreshCw },
+    { id: 'sync', label: 'Cloudflare R2 Sync', icon: RefreshCw },
   ];
 
   const getSyncBadge = () => {
