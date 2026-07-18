@@ -16,10 +16,20 @@ import {
   VaultFolder 
 } from './utils/db';
 
-import { GDriveAccount, gdrive } from './utils/gdrive';
+import { r2, isR2Configured, resetS3Client } from './utils/r2';
 import { db_firestore } from './utils/firebase';
 import { encryptText, decryptText } from './utils/crypto';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+
+interface GDriveAccount {
+  email: string;
+  token: string;
+  expiresAt: number;
+  quotaLimit: number;
+  quotaUsage: number;
+  isActive: boolean;
+  isDemo?: boolean;
+}
 
 interface Toast {
   id: string;
@@ -78,28 +88,31 @@ function App() {
   const [socials, setSocials] = useState<VaultSocialHandle[]>([]);
   const [folders, setFolders] = useState<VaultFolder[]>([]);
   
-  // Multi-Drive Accounts
-  const [connectedDrives, setConnectedDrives] = useState<GDriveAccount[]>(() => {
-    const saved = localStorage.getItem('connected_drives');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Cloudflare R2 connection details
+  const [r2Details, setR2Details] = useState<{ email: string; limit: number; usage: number } | null>(null);
+  const [r2Connected, setR2Connected] = useState<boolean>(isR2Configured());
+
+  // Compute active storage drive based on Cloudflare R2 configuration
+  const activeDrive: GDriveAccount | null = r2Connected && r2Details ? {
+    email: r2Details.email, // "Cloudflare R2 Bucket"
+    token: 'r2-active-token',
+    expiresAt: Date.now() + 3600 * 1000,
+    quotaLimit: r2Details.limit,
+    quotaUsage: r2Details.usage,
+    isActive: true,
+    isDemo: false
+  } : null;
+
+  const connectedDrives = activeDrive ? [activeDrive] : [];
 
   // Sync state badge with connected drives
   useEffect(() => {
-    localStorage.setItem('connected_drives', JSON.stringify(connectedDrives));
-    if (connectedDrives.length > 0) {
-      if (connectedDrives.some(d => d.isActive)) {
-        setSyncStatus('synced');
-      } else {
-        setSyncStatus('idle');
-      }
+    if (r2Connected && r2Details) {
+      setSyncStatus('synced');
     } else {
       setSyncStatus('idle');
     }
-  }, [connectedDrives]);
-
-  // Get active upload target drive
-  const activeDrive = connectedDrives.find(d => d.isActive) || null;
+  }, [r2Connected, r2Details]);
   
   // PWA Install Prompts
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -300,277 +313,141 @@ function App() {
     }, 3500);
   };
 
-  // Helper to validate and automatically refresh expired Google access tokens
-  const getOrRefreshToken = async (email: string): Promise<string> => {
-    const drive = connectedDrives.find(d => d.email.toLowerCase() === email.toLowerCase());
-    if (!drive) throw new Error('Drive not connected');
-
-    // If token is still valid (with a 5-minute buffer), return it!
-    if (Date.now() < drive.expiresAt - 5 * 60 * 1000) {
-      return drive.token;
-    }
-
-    // Token has expired! Check if we have refresh credentials available on Vercel or locally
-    const cid = localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '';
-    const secret = import.meta.env.VITE_GCP_CLIENT_SECRET || '';
-    const refreshToken = import.meta.env.VITE_GCP_REFRESH_TOKEN || '';
-
-    if (cid && secret && refreshToken) {
+  // Refresh R2 bucket credentials and storage usage statistics
+  const refreshR2Details = async () => {
+    if (isR2Configured()) {
       try {
-        const response = await fetch('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            client_id: cid,
-            client_secret: secret,
-            refresh_token: refreshToken,
-            grant_type: 'refresh_token'
-          })
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const newToken = data.access_token;
-          
-          // Verify if this refreshed token belongs to the requested email address
-          const details = await gdrive.fetchAccountDetails(newToken);
-          if (details.email.toLowerCase() === email.toLowerCase()) {
-            const expiresAt = Date.now() + 3600 * 1000;
-
-            // Update token in state
-            setConnectedDrives(prev => 
-              prev.map(d => d.email.toLowerCase() === email.toLowerCase()
-                ? { ...d, token: newToken, expiresAt, quotaUsage: details.usage, quotaLimit: details.limit }
-                : d
-              )
-            );
-
-            addToast('Google Drive session refreshed successfully!', 'success');
-            return newToken;
-          }
-        }
+        resetS3Client();
+        const details = await r2.fetchBucketDetails();
+        setR2Details(details);
+        setR2Connected(true);
       } catch (err) {
-        console.error('Failed to silent refresh token:', err);
+        console.error('Failed to refresh Cloudflare R2 bucket details:', err);
+        setR2Details(null);
+        setR2Connected(false);
       }
+    } else {
+      setR2Details(null);
+      setR2Connected(false);
     }
-
-    // Fallback for custom user oauth flows
-    addToast(`Google Drive session expired for ${email}. Please link your account again.`, 'error');
-    throw new Error('Google Drive session expired');
   };
 
-  // Pull backup from Google Drive and restore database
-  const triggerPullSync = async (token: string) => {
+  // Pull backup from Cloudflare R2 and restore database
+  const triggerPullSync = async () => {
+    if (!isR2Configured()) return;
     try {
       setSyncStatus('syncing');
-      const filesList = await gdrive.listFiles(token);
-      if (filesList && filesList.length > 0) {
-        const backupFiles = filesList.filter(f => f.name.startsWith('auravault_db_backup_'));
-        if (backupFiles.length > 0) {
-          // Sort by name descending
-          backupFiles.sort((a, b) => b.name.localeCompare(a.name));
-          const latestBackup = backupFiles[0];
-
-          // Extract timestamp from filename
+      const backupFiles = await r2.listFiles();
+      if (backupFiles && backupFiles.length > 0) {
+        const dbBackups = backupFiles.filter(f => f.name.startsWith('auravault_db_backup_'));
+        if (dbBackups.length > 0) {
+          // Sort descending to find the newest database state
+          dbBackups.sort((a, b) => b.name.localeCompare(a.name));
+          const latestBackup = dbBackups[0];
+          
           const match = latestBackup.name.match(/auravault_db_backup_(\d+)\.json/);
           const remoteTime = match ? parseInt(match[1], 10) : 0;
           
-          addToast('Found database backup on Google Drive. Syncing...', 'info');
-          const blob = await gdrive.downloadFile(latestBackup.id, token);
-          const text = await blob.text();
-          
-          const success = await handleImportBackup(text);
-          if (success) {
-            localStorage.setItem('auravault_last_sync_time', remoteTime.toString());
-            addToast('Vault database synchronized from Google Drive!', 'success');
-          } else {
-            addToast('Failed to restore database from backup file', 'error');
+          let lastSyncTime = parseInt(localStorage.getItem('auravault_last_sync_time') || '0', 10);
+          if (remoteTime > lastSyncTime) {
+            addToast('Found database backup on Cloudflare R2. Syncing...', 'info');
+            const blob = await r2.downloadFile(latestBackup.id);
+            const text = await blob.text();
+            const success = await handleImportBackup(text);
+            if (success) {
+              localStorage.setItem('auravault_last_sync_time', remoteTime.toString());
+              addToast('Vault database synchronized from Cloudflare R2!', 'success');
+            } else {
+              addToast('Failed to restore database from backup file', 'error');
+            }
           }
         }
       }
     } catch (err) {
-      console.error('Failed to pull backup from Google Drive:', err);
+      console.error('Failed to pull backup from Cloudflare R2:', err);
     } finally {
       setSyncStatus('synced');
     }
   };
 
-  // Push database backup to Google Drive in the background (silent auto-sync)
+  // Push database backup to Cloudflare R2 in the background (silent auto-sync)
   const triggerPushSync = async () => {
-    const active = connectedDrives.find(d => d.isActive);
-    if (!active) return;
+    if (!isR2Configured()) return;
     try {
       setSyncStatus('syncing');
       const payload = await handleExportBackup();
       const now = Date.now();
-      const token = await getOrRefreshToken(active.email);
       
-      await gdrive.uploadFile(
-        { 
-          name: `auravault_db_backup_${now}.json`, 
-          type: 'application/json', 
-          blob: new Blob([payload], { type: 'application/json' }) 
-        },
-        token
-      );
+      await r2.uploadFile({ 
+        name: `auravault_db_backup_${now}.json`, 
+        type: 'application/json', 
+        blob: new Blob([payload], { type: 'application/json' }) 
+      });
       
       localStorage.setItem('auravault_last_sync_time', now.toString());
 
-      // Silently clean up older backups
+      // Silently clean up older backups to save space
       try {
-        const filesList = await gdrive.listFiles(token);
-        const backupFiles = filesList.filter(f => f.name.startsWith('auravault_db_backup_'));
-        if (backupFiles.length > 3) {
-          backupFiles.sort((a, b) => b.name.localeCompare(a.name));
-          const toDelete = backupFiles.slice(2);
+        const backupFiles = await r2.listFiles();
+        const dbBackups = backupFiles.filter(f => f.name.startsWith('auravault_db_backup_'));
+        if (dbBackups.length > 3) {
+          dbBackups.sort((a, b) => b.name.localeCompare(a.name));
+          const toDelete = dbBackups.slice(2);
           for (const f of toDelete) {
-            await gdrive.deleteFile(f.id, token);
+            await r2.deleteFile(f.id);
           }
         }
       } catch (err) {
-        console.error('Failed to clean up old backups during background push:', err);
+        console.error('Failed to clean up old backups in R2:', err);
       }
     } catch (err) {
-      console.error('Failed to push database backup in background:', err);
+      console.error('Failed to push database backup to Cloudflare R2:', err);
     } finally {
       setSyncStatus('synced');
     }
   };
 
-  // --- GOOGLE DRIVE MULTI-ACCOUNT MANAGEMENT ---
-  const handleLinkDrive = (email: string, token: string, limit: number, usage: number, makeActive = true) => {
-    setConnectedDrives(prev => {
-      // If forcing this drive to be active, set all other accounts as inactive
-      const updated = prev.map(d => makeActive ? { ...d, isActive: false } : d);
-      
-      const existingIdx = updated.findIndex(d => d.email.toLowerCase() === email.toLowerCase());
-      if (existingIdx > -1) {
-        // Update existing drive details in-place
-        updated[existingIdx] = {
-          ...updated[existingIdx],
-          token,
-          expiresAt: Date.now() + 3600 * 1000,
-          quotaLimit: limit,
-          quotaUsage: usage,
-          isActive: makeActive ? true : updated[existingIdx].isActive
-        };
-      } else {
-        // Insert new account. Make it active only if requested or if there are no active drives yet
-        const hasActive = updated.some(d => d.isActive);
-        updated.push({
-          email,
-          token,
-          expiresAt: Date.now() + 3600 * 1000,
-          quotaLimit: limit,
-          quotaUsage: usage,
-          isActive: makeActive ? true : !hasActive
-        });
-      }
-      return updated;
-    });
-
-    const shouldSync = makeActive || !connectedDrives.some(d => d.isActive);
-    if (shouldSync) {
-      triggerPullSync(token);
-    }
+  // --- CLOUDFLARE R2 BUCKET MANAGEMENT ---
+  const handleLinkDrive = async (email: string, token: string, limit: number, usage: number) => {
+    await refreshR2Details();
   };
 
   const handleDisconnectDrive = (email: string) => {
-    setConnectedDrives(prev => {
-      const filtered = prev.filter(d => d.email.toLowerCase() !== email.toLowerCase());
-      // If we deleted the active one, make the first remaining one active
-      if (filtered.length > 0 && !filtered.some(d => d.isActive)) {
-        filtered[0].isActive = true;
-      }
-      return filtered;
-    });
+    localStorage.removeItem('r2_account_id');
+    localStorage.removeItem('r2_bucket_name');
+    localStorage.removeItem('r2_access_key_id');
+    localStorage.removeItem('r2_secret_access_key');
+    resetS3Client();
+    setR2Details(null);
+    setR2Connected(false);
   };
 
   const handleSetActiveDrive = (email: string) => {
-    setConnectedDrives(prev => {
-      return prev.map(d => ({
-        ...d,
-        isActive: d.email.toLowerCase() === email.toLowerCase()
-      }));
-    });
+    // No-op for Cloudflare R2
   };
 
-  // Startup initialization: sync with active drive and refresh all quotas silently
+  // Startup initialization: sync with active Cloudflare R2 bucket and refresh quota
   useEffect(() => {
-    const initAppDrives = async () => {
-      const active = connectedDrives.find(d => d.isActive);
-      if (active) {
+    const initR2Storage = async () => {
+      if (isR2Configured()) {
         try {
-          const token = await getOrRefreshToken(active.email);
-          await triggerPullSync(token);
+          resetS3Client();
+          const details = await r2.fetchBucketDetails();
+          setR2Details(details);
+          setR2Connected(true);
+          await triggerPullSync();
         } catch (e) {
-          console.error('Failed to sync active drive on startup:', e);
-        }
-      }
-
-      // Refresh all connected drive quotas silently
-      for (const drive of connectedDrives) {
-        try {
-          const isValid = Date.now() < drive.expiresAt - 5 * 60 * 1000;
-          let token = '';
-          if (isValid) {
-            token = drive.token;
-          } else {
-            // Check if we can refresh it silently
-            const cid = localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '';
-            const secret = import.meta.env.VITE_GCP_CLIENT_SECRET || '';
-            const refreshToken = import.meta.env.VITE_GCP_REFRESH_TOKEN || '';
-            if (cid && secret && refreshToken) {
-              const response = await fetch('https://oauth2.googleapis.com/token', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({
-                  client_id: cid,
-                  client_secret: secret,
-                  refresh_token: refreshToken,
-                  grant_type: 'refresh_token'
-                })
-              });
-              if (response.ok) {
-                const data = await response.json();
-                const newToken = data.access_token;
-                const details = await gdrive.fetchAccountDetails(newToken);
-                if (details.email.toLowerCase() === drive.email.toLowerCase()) {
-                  token = newToken;
-                }
-              }
-            }
-          }
-
-          if (token) {
-            const details = await gdrive.fetchAccountDetails(token);
-            setConnectedDrives(prev => 
-              prev.map(d => d.email.toLowerCase() === drive.email.toLowerCase()
-                ? { ...d, token, quotaUsage: details.usage, quotaLimit: details.limit, expiresAt: Date.now() + 3600 * 1000 }
-                : d
-              )
-            );
-          }
-        } catch (e) {
-          console.error(`Failed to refresh quota silently for ${drive.email}:`, e);
+          console.error('Failed to initialize Cloudflare R2 storage on startup:', e);
         }
       }
     };
-
-    if (connectedDrives.length > 0) {
-      initAppDrives();
-    }
+    initR2Storage();
   }, []);
 
   // Direct cloud file downloader helper
   const handleDownloadCloudFile = async (file: VaultFile): Promise<string> => {
-    if (!file.googleFileId || !file.driveEmail) {
+    if (!file.googleFileId) {
       return file.dataUrl;
-    }
-
-    const targetDrive = connectedDrives.find(d => d.email === file.driveEmail);
-    if (!targetDrive) {
-      throw new Error('Associated Google Drive account is no longer connected');
     }
 
     try {
@@ -587,10 +464,8 @@ function App() {
       }, 100);
 
       try {
-        const token = await getOrRefreshToken(targetDrive.email);
-        const blob = await gdrive.downloadFile(
+        const blob = await r2.downloadFile(
           file.googleFileId, 
-          token, 
           (pct) => {
             const capped = Math.min(99, pct);
             if (capped > currentProgress) {
@@ -655,10 +530,8 @@ function App() {
           }, 100);
 
           try {
-            const token = await getOrRefreshToken(activeDrive.email);
-            googleFileId = await gdrive.uploadFile(
+            googleFileId = await r2.uploadFile(
               { name, type, blob: fileBlob },
-              token,
               (pct) => {
                 const capped = Math.min(99, pct);
                 if (capped > currentProgress) {
@@ -672,14 +545,9 @@ function App() {
             setTransferProgress(100);
             await new Promise(resolve => setTimeout(resolve, 300));
 
-            // Fetch updated real quota details in background
-            gdrive.fetchAccountDetails(token).then(details => {
-              setConnectedDrives(prev => 
-                prev.map(d => d.email === activeDrive.email 
-                  ? { ...d, quotaUsage: details.usage, quotaLimit: details.limit } 
-                  : d
-                )
-              );
+            // Fetch updated R2 quota details
+            r2.fetchBucketDetails().then(details => {
+              setR2Details(details);
             }).catch(console.error);
 
           } catch (uploadErr) {
@@ -693,7 +561,7 @@ function App() {
           driveEmail = activeDrive.email;
         }
       } catch (err) {
-        addToast('Drive upload failed, saving to local offline storage.', 'error');
+        addToast('R2 upload failed, saving to local offline storage.', 'error');
       } finally {
         setSyncStatus('synced');
       }
@@ -732,26 +600,19 @@ function App() {
 
   const handleDeleteFile = async (id: string) => {
     const file = files.find(f => f.id === id);
-    if (file && file.googleFileId && file.driveEmail) {
-      const targetDrive = connectedDrives.find(d => d.email === file.driveEmail);
-      if (targetDrive) {
-        try {
-          setSyncStatus('syncing');
-          const token = await getOrRefreshToken(targetDrive.email);
-          await gdrive.deleteFile(file.googleFileId, token);
-          
-          // Deduct quota
-          setConnectedDrives(prev => 
-            prev.map(d => d.email === targetDrive.email 
-              ? { ...d, quotaUsage: Math.max(0, d.quotaUsage - file.size) } 
-              : d
-            )
-          );
-        } catch (err) {
-          console.error('Failed to delete file from Google Drive:', err);
-        } finally {
-          setSyncStatus('synced');
-        }
+    if (file && file.googleFileId && isR2Configured()) {
+      try {
+        setSyncStatus('syncing');
+        await r2.deleteFile(file.googleFileId);
+        
+        // Fetch updated R2 quota details
+        r2.fetchBucketDetails().then(details => {
+          setR2Details(details);
+        }).catch(console.error);
+      } catch (err) {
+        console.error('Failed to delete file from Cloudflare R2:', err);
+      } finally {
+        setSyncStatus('synced');
       }
     }
 
@@ -1004,32 +865,31 @@ function App() {
         showInstallBtn={showInstallBtn}
         onInstallPWA={handleInstallPWA}
         onTriggerSync={async () => {
-          if (!activeDrive) {
+          if (!isR2Configured()) {
             setActiveTab('sync');
-            addToast('Please connect a Google Drive to start synchronizing.', 'info');
+            addToast('Please connect Cloudflare R2 to start synchronizing.', 'info');
             return;
           }
           setSyncStatus('syncing');
           try {
-            const token = await getOrRefreshToken(activeDrive.email);
             // 1. Fetch remote files list to check for newer remote updates
-            const filesList = await gdrive.listFiles(token);
-            const backupFiles = filesList.filter(f => f.name.startsWith('auravault_db_backup_'));
+            const backupFiles = await r2.listFiles();
+            const dbBackups = backupFiles.filter(f => f.name.startsWith('auravault_db_backup_'));
             
             let lastSyncTime = parseInt(localStorage.getItem('auravault_last_sync_time') || '0', 10);
             let imported = false;
-
-            if (backupFiles.length > 0) {
-              backupFiles.sort((a, b) => b.name.localeCompare(a.name));
-              const latestBackup = backupFiles[0];
+ 
+            if (dbBackups.length > 0) {
+              dbBackups.sort((a, b) => b.name.localeCompare(a.name));
+              const latestBackup = dbBackups[0];
               
               // Extract timestamp from filename
               const match = latestBackup.name.match(/auravault_db_backup_(\d+)\.json/);
               const remoteTime = match ? parseInt(match[1], 10) : 0;
-
+ 
               if (remoteTime > lastSyncTime) {
-                addToast('Newer updates found on Google Drive. Pulling changes...', 'info');
-                const blob = await gdrive.downloadFile(latestBackup.id, token);
+                addToast('Newer updates found on Cloudflare R2. Pulling changes...', 'info');
+                const blob = await r2.downloadFile(latestBackup.id);
                 const text = await blob.text();
                 const success = await handleImportBackup(text);
                 if (success) {
@@ -1039,34 +899,30 @@ function App() {
                 }
               }
             }
-
+ 
             // 2. Upload our latest state
             const now = Date.now();
             const payload = await handleExportBackup();
-            await gdrive.uploadFile(
-              { 
-                name: `auravault_db_backup_${now}.json`, 
-                type: 'application/json', 
-                blob: new Blob([payload], { type: 'application/json' }) 
-              },
-              token
-            );
+            await r2.uploadFile({ 
+              name: `auravault_db_backup_${now}.json`, 
+              type: 'application/json', 
+              blob: new Blob([payload], { type: 'application/json' }) 
+            });
             
             localStorage.setItem('auravault_last_sync_time', now.toString());
             addToast(
               imported 
                 ? 'Vault database synchronized (remote pulled and local uploaded)' 
-                : 'Vault database uploaded to Google Drive (local up-to-date)', 
+                : 'Vault database uploaded to Cloudflare R2 (local up-to-date)', 
               'success'
             );
-
+ 
             // 3. Clean up old backups to save space (keep only the 3 latest backups)
-            if (backupFiles.length > 3) {
-              // Delete oldest backup files
-              const toDelete = backupFiles.slice(2); // Keep the 2 latest
+            if (dbBackups.length > 3) {
+              const toDelete = dbBackups.slice(2); // Keep the 2 latest
               for (const f of toDelete) {
                 try {
-                  await gdrive.deleteFile(f.id, token);
+                  await r2.deleteFile(f.id);
                 } catch (e) {
                   console.error('Failed to clean up old backup file:', e);
                 }

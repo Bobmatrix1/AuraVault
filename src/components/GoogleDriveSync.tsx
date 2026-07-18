@@ -1,22 +1,14 @@
 import React, { useState } from 'react';
 import { 
-  Cloud, 
+  HardDrive,
   Trash2, 
   CheckCircle, 
-  HelpCircle, 
-  Plus, 
-  HardDrive, 
-  RefreshCw, 
   AlertCircle,
-  ExternalLink
+  HelpCircle,
+  Settings,
+  Database
 } from 'lucide-react';
-import { GDriveAccount, gdrive, isGCPConfigured } from '../utils/gdrive';
-
-declare global {
-  interface Window {
-    google?: any;
-  }
-}
+import { GDriveAccount } from '../utils/gdrive';
 
 interface GoogleDriveSyncProps {
   connectedDrives: GDriveAccount[];
@@ -28,24 +20,26 @@ interface GoogleDriveSyncProps {
 
 export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
   connectedDrives,
-  onLinkDrive,
   onDisconnectDrive,
-  onSetActiveDrive,
   toast
 }) => {
-  const [clientId, setClientId] = useState(() => localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID || '');
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('gdrive_api_key') || import.meta.env.VITE_GCP_API_KEY || '');
-  const [isSaved, setIsSaved] = useState(() => !!((localStorage.getItem('gdrive_client_id') || import.meta.env.VITE_GCP_CLIENT_ID) && (localStorage.getItem('gdrive_api_key') || import.meta.env.VITE_GCP_API_KEY)));
+  // Load Cloudflare R2 Configuration keys from local storage or environment fallbacks
+  const [accountId, setAccountId] = useState(() => localStorage.getItem('r2_account_id') || import.meta.env.VITE_R2_ACCOUNT_ID || '');
+  const [bucketName, setBucketName] = useState(() => localStorage.getItem('r2_bucket_name') || import.meta.env.VITE_R2_BUCKET_NAME || '');
+  const [accessKeyId, setAccessKeyId] = useState(() => localStorage.getItem('r2_access_key_id') || import.meta.env.VITE_R2_ACCESS_KEY_ID || '');
+  const [secretAccessKey, setSecretAccessKey] = useState(() => localStorage.getItem('r2_secret_access_key') || import.meta.env.VITE_R2_SECRET_ACCESS_KEY || '');
   
-  // Custom manual token entry
-  const [customToken, setCustomToken] = useState('');
-  const [showTokenInput, setShowTokenInput] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
+  const [isSaved, setIsSaved] = useState(() => !!(
+    (localStorage.getItem('r2_account_id') || import.meta.env.VITE_R2_ACCOUNT_ID) &&
+    (localStorage.getItem('r2_bucket_name') || import.meta.env.VITE_R2_BUCKET_NAME) &&
+    (localStorage.getItem('r2_access_key_id') || import.meta.env.VITE_R2_ACCESS_KEY_ID) &&
+    (localStorage.getItem('r2_secret_access_key') || import.meta.env.VITE_R2_SECRET_ACCESS_KEY)
+  ));
 
-  // Active Drive
+  // Active Drive (corresponds to R2 bucket details passed in)
   const activeDrive = connectedDrives.find(d => d.isActive);
 
-  // Format bytes helper
+  // Format storage sizes
   const formatStorage = (bytes: number) => {
     if (bytes === 0) return '0 Bytes';
     const GB = 1024 * 1024 * 1024;
@@ -57,147 +51,43 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
     return `${bytes} Bytes`;
   };
 
-  // Save GCP configuration
+  // Save R2 configurations to browser local storage
   const handleSaveConfig = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!clientId.trim() || !apiKey.trim()) {
-      toast('Please supply both Client ID and API Key', 'error');
+    if (!accountId.trim() || !bucketName.trim() || !accessKeyId.trim() || !secretAccessKey.trim()) {
+      toast('Please supply all R2 credentials fields', 'error');
       return;
     }
-    localStorage.setItem('gdrive_client_id', clientId.trim());
-    localStorage.setItem('gdrive_api_key', apiKey.trim());
+    localStorage.setItem('r2_account_id', accountId.trim());
+    localStorage.setItem('r2_bucket_name', bucketName.trim());
+    localStorage.setItem('r2_access_key_id', accessKeyId.trim());
+    localStorage.setItem('r2_secret_access_key', secretAccessKey.trim());
     setIsSaved(true);
-    toast('Google Drive configurations updated', 'success');
+    toast('Cloudflare R2 configurations saved! Please refresh the page.', 'success');
+    window.location.reload();
   };
 
-  // Clear credentials
+  // Disconnect / Clear R2 configurations
   const handleClearConfig = () => {
-    localStorage.removeItem('gdrive_client_id');
-    localStorage.removeItem('gdrive_api_key');
-    setClientId('');
-    setApiKey('');
+    localStorage.removeItem('r2_account_id');
+    localStorage.removeItem('r2_bucket_name');
+    localStorage.removeItem('r2_access_key_id');
+    localStorage.removeItem('r2_secret_access_key');
+    setAccountId('');
+    setBucketName('');
+    setAccessKeyId('');
+    setSecretAccessKey('');
     setIsSaved(false);
-    toast('API credentials cleared. Vault is back to local/simulation mode.', 'info');
-  };
-
-  // Connect via manual OAuth Token
-  const handleConnectWithToken = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customToken.trim()) return;
-
-    setIsConnecting(true);
-    toast('Connecting to Google Drive API...', 'info');
-
-    try {
-      const details = await gdrive.fetchAccountDetails(customToken.trim());
-      
-      // Check if already connected
-      if (connectedDrives.some(d => d.email.toLowerCase() === details.email.toLowerCase())) {
-        toast(`Account ${details.email} is already connected`, 'error');
-        setIsConnecting(false);
-        return;
-      }
-
-      onLinkDrive(
-        details.email,
-        customToken.trim(),
-        details.limit,
-        details.usage
-      );
-      setCustomToken('');
-      setShowTokenInput(false);
-      toast(`Successfully linked Google Drive: ${details.email}`, 'success');
-    } catch (err) {
-      toast('Failed to authorize token. Check if token is expired.', 'error');
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  // Load Google Script
-  const loadGoogleScript = (): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      if (window.google?.accounts?.oauth2) {
-        resolve();
-        return;
-      }
-      const existingScript = document.getElementById('google-gsi-client');
-      if (existingScript) {
-        existingScript.onload = () => resolve();
-        return;
-      }
-      const script = document.createElement('script');
-      script.id = 'google-gsi-client';
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.async = true;
-      script.defer = true;
-      script.onload = () => resolve();
-      script.onerror = (err) => reject(err);
-      document.body.appendChild(script);
-    });
-  };
-
-  // Trigger Google Sign-In Popup
-  const handleGoogleOAuthLogin = async () => {
-    if (!clientId.trim()) {
-      toast('Please enter and save your GCP Client ID in the configuration panel first.', 'error');
-      setShowTokenInput(true); // Toggle manual input as fallback
-      return;
-    }
-
-    setIsConnecting(true);
-    toast('Opening Google Account Consent...', 'info');
-
-    try {
-      await loadGoogleScript();
-      
-      const client = window.google.accounts.oauth2.initTokenClient({
-        client_id: clientId.trim(),
-        scope: 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive.file',
-        callback: async (tokenResponse: any) => {
-          if (tokenResponse.error) {
-            toast('Google Sign-In failed or was cancelled', 'error');
-            setIsConnecting(false);
-            return;
-          }
-
-          const accessToken = tokenResponse.access_token;
-          toast('Fetching account profile and storage quotas...', 'info');
-
-          try {
-            const details = await gdrive.fetchAccountDetails(accessToken);
-
-            if (connectedDrives.some(d => d.email.toLowerCase() === details.email.toLowerCase())) {
-              toast(`Drive account (${details.email}) is already linked.`, 'info');
-              setIsConnecting(false);
-              return;
-            }
-
-            onLinkDrive(details.email, accessToken, details.limit, details.usage);
-            toast(`Successfully linked Google Drive: ${details.email}`, 'success');
-            setShowTokenInput(false);
-          } catch (err) {
-            toast('Failed to fetch account info using Google token', 'error');
-          } finally {
-            setIsConnecting(false);
-          }
-        },
-      });
-
-      client.requestAccessToken();
-    } catch (err) {
-      toast('Failed to initialize Google login popup', 'error');
-      setIsConnecting(false);
-      setShowTokenInput(true); // show manual entry fallback
-    }
+    onDisconnectDrive('Cloudflare R2 Bucket');
+    toast('Cloudflare R2 disconnected. Vault is back in local-only mode.', 'info');
   };
 
   return (
     <div className="gdrive-sync-view">
       <div className="header-row">
         <div className="page-title">
-          <h2>Google Drive Multi-Account Manager</h2>
-          <p>Link multiple Google Drives. Upload directly to Google Cloud, stream previews, and scale capacity dynamically.</p>
+          <h2>Cloudflare R2 Object Storage Manager</h2>
+          <p>Encrypt and sync backups, credentials, and multimedia assets directly to your private, zero-egress Cloudflare R2 bucket.</p>
         </div>
       </div>
 
@@ -206,7 +96,7 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
         <div className="sync-col main-col">
           {/* Active Quota Card */}
           <div className="sync-card glass">
-            <h3>Active Drive Quota</h3>
+            <h3>Active R2 Storage Quota</h3>
             
             {activeDrive ? (
               <div className="active-quota-display">
@@ -251,93 +141,39 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
             ) : (
               <div className="empty-quota-state">
                 <AlertCircle size={32} className="quota-alert-icon" />
-                <p>No Google Drive is set as the active storage target. Vault is running in local-only offline mode (100MB max limit).</p>
+                <p>No Cloudflare R2 bucket is connected. Vault is running in local-only offline mode (100MB limit).</p>
               </div>
             )}
           </div>
 
-          {/* Connected Accounts List */}
+          {/* Connected Bucket Details List */}
           <div className="sync-card glass">
             <div className="card-header-flex">
-              <h3>Linked Accounts ({connectedDrives.length})</h3>
-              
-              <div className="account-actions-flex">
-                {/* Link Google OAuth */}
-                
-                <button 
-                  className="btn btn-primary btn-sm" 
-                  onClick={handleGoogleOAuthLogin} 
-                  disabled={isConnecting}
-                >
-                  <Cloud size={12} />
-                  <span>Link Google OAuth</span>
-                </button>
-              </div>
+              <h3>Active Storage Buckets ({connectedDrives.length})</h3>
             </div>
-
-            {showTokenInput && (
-              <form className="token-manual-form" onSubmit={handleConnectWithToken}>
-                <label className="form-label">Google OAuth Access Token</label>
-                <div className="token-input-row">
-                  <input 
-                    type="password" 
-                    className="input-glass font-mono"
-                    placeholder="ya29.a0AfH6SM..."
-                    value={customToken}
-                    onChange={(e) => setCustomToken(e.target.value)}
-                    required
-                  />
-                  <button type="submit" className="btn btn-primary" disabled={isConnecting}>
-                    {isConnecting ? 'Linking...' : 'Link Account'}
-                  </button>
-                </div>
-                <p className="token-tip-text">
-                  Paste a valid access token generated from your Google GCP OAuth Consent workflow.
-                </p>
-                <div style={{ textAlign: 'right', marginTop: '10px' }}>
-                  <span 
-                    onClick={() => setShowTokenInput(false)} 
-                    style={{ fontSize: '11px', color: 'var(--accent-red)', cursor: 'pointer', textDecoration: 'underline' }}
-                  >
-                    Cancel manual entry
-                  </span>
-                </div>
-              </form>
-            )}
-
-            {!showTokenInput && (
-              <div style={{ padding: '0 24px 16px 24px', textAlign: 'right' }}>
-                <span 
-                  onClick={() => setShowTokenInput(true)} 
-                  style={{ fontSize: '11px', color: 'var(--text-muted)', cursor: 'pointer', textDecoration: 'underline' }}
-                >
-                  Manually paste OAuth Access Token instead
-                </span>
-              </div>
-            )}
 
             {connectedDrives.length === 0 ? (
               <div className="empty-accounts-state">
-                <p>No Google Drive accounts connected yet. Link an account to start direct cloud uploads.</p>
+                <p>No Cloudflare R2 bucket configured. Fill out the configuration panel to establish connection.</p>
               </div>
             ) : (
               <div className="accounts-list-container">
                 {connectedDrives.map(account => {
                   const percentage = ((account.quotaUsage / account.quotaLimit) * 100).toFixed(1);
                   const remainingBytes = account.quotaLimit - account.quotaUsage;
-                  const isFull = remainingBytes < 100 * 1024 * 1024; // Less than 100MB left
+                  const isFull = remainingBytes < 10 * 1024 * 1024; // Less than 10MB left
 
                   return (
                     <div 
                       key={account.email} 
-                      className={`account-list-item glass ${account.isActive ? 'active-outline' : ''}`}
+                      className={`account-list-item glass active-outline`}
                     >
                       <div className="item-left">
-                        <HardDrive size={24} className={account.isActive ? 'color-cyan' : 'color-muted'} />
+                        <Database size={24} className="color-cyan" />
                         <div className="account-details">
-                          <span className="account-email-label">{account.email}</span>
+                          <span className="account-email-label">{bucketName || 'auravault-storage'}</span>
                           <span className="account-meta-label">
-                            {account.isDemo ? 'Simulation Demo Drive' : 'Google Cloud Platform Drive'}
+                            Private S3-Compatible Cloudflare Bucket
                             {isFull && <span className="full-badge">FULL</span>}
                           </span>
                         </div>
@@ -353,24 +189,13 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
                       </div>
 
                       <div className="item-right">
-                        {!account.isActive ? (
-                          <button 
-                            className="btn btn-secondary btn-sm" 
-                            onClick={() => onSetActiveDrive(account.email)}
-                            disabled={isFull}
-                          >
-                            Set Active
-                          </button>
-                        ) : (
-                          <span className="active-pill-badge">Active Target</span>
-                        )}
+                        <span className="active-pill-badge">Active</span>
                         
                         <button 
                           className="action-btn delete" 
                           onClick={() => {
-                            if (confirm(`Are you sure you want to disconnect Google Drive "${account.email}"?`)) {
-                              onDisconnectDrive(account.email);
-                              toast(`Disconnected "${account.email}"`, 'info');
+                            if (confirm(`Are you sure you want to disconnect Cloudflare R2 bucket "${bucketName}"?`)) {
+                              handleClearConfig();
                             }
                           }}
                         >
@@ -387,32 +212,58 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
 
         {/* Right Side: Setup Instructions / Config */}
         <div className="sync-col config-col">
-          {/* GCP Configuration */}
+          {/* R2 Configuration Form */}
           <div className="sync-card glass">
-            <h3>GCP Project Configuration</h3>
+            <h3>Cloudflare R2 Credentials</h3>
             
             <form onSubmit={handleSaveConfig}>
               <div className="form-group">
-                <label className="form-label">Google Client ID</label>
+                <label className="form-label">Account ID</label>
                 <input 
                   type="text" 
                   className="input-glass font-mono"
-                  placeholder="xxxxxx-xxxxxxxx.apps.googleusercontent.com"
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
+                  placeholder="3499eaecb8a7b09c..."
+                  value={accountId}
+                  onChange={(e) => setAccountId(e.target.value)}
                   disabled={isSaved}
                   required
                 />
               </div>
 
               <div className="form-group">
-                <label className="form-label">Google API Key</label>
+                <label className="form-label">Bucket Name</label>
+                <input 
+                  type="text" 
+                  className="input-glass font-mono"
+                  placeholder="auravault-storage"
+                  value={bucketName}
+                  onChange={(e) => setBucketName(e.target.value)}
+                  disabled={isSaved}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Access Key ID</label>
+                <input 
+                  type="text" 
+                  className="input-glass font-mono"
+                  placeholder="fffff317e70fa6844..."
+                  value={accessKeyId}
+                  onChange={(e) => setAccessKeyId(e.target.value)}
+                  disabled={isSaved}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Secret Access Key</label>
                 <input 
                   type="password" 
                   className="input-glass font-mono"
-                  placeholder="AIzaSyXXXXXXXXXXXXXXXXXX"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="a7f33f036ada03868..."
+                  value={secretAccessKey}
+                  onChange={(e) => setSecretAccessKey(e.target.value)}
                   disabled={isSaved}
                   required
                 />
@@ -421,12 +272,12 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
               {isSaved ? (
                 <div className="config-saved-message">
                   <CheckCircle size={14} color="var(--accent-green)" />
-                  <span>Google Client configuration is saved.</span>
-                  <button type="button" className="text-btn" onClick={handleClearConfig}>Edit Credentials</button>
+                  <span>Cloudflare R2 configuration is saved and active.</span>
+                  <button type="button" className="text-btn" onClick={handleClearConfig}>Disconnect Bucket</button>
                 </div>
               ) : (
                 <button type="submit" className="btn btn-secondary btn-full">
-                  Save Credentials
+                  Save & Connect R2
                 </button>
               )}
             </form>
@@ -436,21 +287,16 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
           <div className="sync-card glass info-tutorial-card">
             <div className="tutorial-header">
               <HelpCircle size={16} />
-              <h4>OAuth Quick Reference</h4>
+              <h4>R2 Quick Setup Guide</h4>
             </div>
             
             <ol className="tutorial-steps">
-              <li>Open the <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer">GCP Console</a>.</li>
-              <li>Enable the <strong>Google Drive API</strong>.</li>
-              <li>Set up your **OAuth Consent Screen** (external or internal).</li>
-              <li>Under **Credentials**, create:
-                <ul>
-                  <li>**API Key** (restrict to Drive API).</li>
-                  <li>**OAuth Client ID** (Web application).</li>
-                </ul>
-              </li>
-              <li>Add <code>http://localhost:5173</code> to Origins and Redirect URIs.</li>
-              <li>Generate an Access Token to connect individual drives securely.</li>
+              <li>Log in to your <strong>Cloudflare Dashboard</strong>.</li>
+              <li>Go to <strong>R2</strong> and create your bucket.</li>
+              <li>Under Bucket <strong>Settings</strong>, configure CORS rules (expose ETag, allow AllowedOrigins).</li>
+              <li>Go to <strong>Manage R2 API Tokens</strong> and click <strong>Create API Token</strong>.</li>
+              <li>Create a token with <strong>Admin Read & Write</strong> permissions.</li>
+              <li>Copy the Account ID, Bucket name, Access Key ID, and Secret Access Key and save them here.</li>
             </ol>
           </div>
         </div>
@@ -494,16 +340,40 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
           flex-wrap: wrap;
           gap: 12px;
         }
-        .account-actions-flex {
+        .form-group {
+          margin-bottom: 16px;
           display: flex;
-          gap: 8px;
+          flex-direction: column;
+          gap: 6px;
         }
-        
-        /* Quota styles */
+        .form-label {
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--text-secondary);
+        }
+        .config-saved-message {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 12px;
+          color: var(--text-secondary);
+          margin-top: 12px;
+          flex-wrap: wrap;
+        }
+        .text-btn {
+          background: none;
+          border: none;
+          color: var(--accent-pink);
+          text-decoration: underline;
+          cursor: pointer;
+          font-size: 12px;
+          padding: 0;
+          font-weight: 600;
+        }
         .active-quota-display {
           display: flex;
           flex-direction: column;
-          gap: 4px;
+          gap: 12px;
         }
         .quota-header {
           display: flex;
@@ -516,71 +386,63 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
           display: flex;
           align-items: center;
           gap: 6px;
-          font-size: 10px;
-          font-weight: 800;
+          font-size: 11px;
+          font-weight: 700;
           color: var(--accent-green);
-          background: rgba(16, 185, 129, 0.08);
-          border: 1px solid rgba(16, 185, 129, 0.2);
-          padding: 4px 10px;
-          border-radius: 99px;
-          text-transform: uppercase;
+          background: rgba(34, 197, 94, 0.1);
+          padding: 4px 8px;
+          border-radius: 12px;
+          border: 1px dashed var(--accent-green);
         }
         .active-email {
           font-size: 14px;
+          font-weight: 600;
+          color: var(--text-primary);
+        }
+        .storage-info-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          font-size: 14px;
+          margin-bottom: 8px;
+        }
+        .current-storage {
           font-weight: 700;
           color: var(--text-primary);
+        }
+        .limit-storage {
+          color: var(--text-secondary);
+        }
+        .storage-percentage-text {
+          font-weight: 700;
         }
         .remaining-quota-label {
           font-size: 12px;
           color: var(--text-secondary);
-          margin-top: 12px;
-          text-align: right;
+          margin-top: 8px;
         }
-        .remaining-quota-label strong {
-          color: var(--text-primary);
-        }
-        
         .empty-quota-state {
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          padding: 32px;
-          text-align: center;
           gap: 12px;
-          color: var(--text-secondary);
-          font-size: 13px;
+          padding: 40px 0;
+          text-align: center;
         }
         .quota-alert-icon {
-          color: var(--accent-amber);
+          color: var(--accent-pink);
         }
-        
-        /* Token Form */
-        .token-manual-form {
-          background: rgba(0,0,0,0.15);
-          border: 1px solid var(--border-light);
-          padding: 16px;
-          border-radius: 12px;
-          margin-bottom: 20px;
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-        .token-input-row {
-          display: flex;
-          gap: 12px;
-        }
-        .token-tip-text {
-          font-size: 11px;
-          color: var(--text-muted);
-        }
-        
-        /* Connected Accounts list */
-        .empty-accounts-state {
-          text-align: center;
-          padding: 32px;
+        .empty-quota-state p {
           font-size: 13px;
-          color: var(--text-muted);
+          color: var(--text-secondary);
+          max-width: 320px;
+        }
+        .empty-accounts-state {
+          padding: 40px 0;
+          text-align: center;
+          color: var(--text-secondary);
+          font-size: 13px;
         }
         .accounts-list-container {
           display: flex;
@@ -591,201 +453,112 @@ export const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
           display: flex;
           justify-content: space-between;
           align-items: center;
-          padding: 16px;
+          padding: 16px 20px;
+          border-radius: 12px;
+          flex-wrap: wrap;
           gap: 16px;
-        }
-        .account-list-item.active-outline {
-          border-color: var(--accent-cyan);
-          box-shadow: inset 0 0 10px rgba(6, 182, 212, 0.05);
         }
         .item-left {
           display: flex;
           align-items: center;
-          gap: 12px;
-          flex: 1.5;
-          min-width: 0;
+          gap: 16px;
         }
-        .color-cyan { color: var(--accent-cyan); }
-        .color-muted { color: var(--text-muted); }
         .account-details {
           display: flex;
           flex-direction: column;
-          min-width: 0;
+          gap: 2px;
         }
         .account-email-label {
-          font-size: 13px;
+          font-size: 14px;
           font-weight: 700;
           color: var(--text-primary);
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
         }
         .account-meta-label {
           font-size: 11px;
-          color: var(--text-muted);
+          color: var(--text-secondary);
           display: flex;
           align-items: center;
           gap: 6px;
         }
         .full-badge {
-          background: rgba(244, 63, 94, 0.15);
+          background: rgba(239, 68, 68, 0.1);
           color: var(--accent-red);
-          font-size: 8px;
+          font-size: 9px;
           font-weight: 900;
           padding: 1px 4px;
           border-radius: 4px;
-        }
-        
-        .item-middle {
-          flex: 1;
-          display: flex;
-          align-items: center;
+          border: 1px solid var(--accent-red);
         }
         .mini-quota-bar {
           display: flex;
           flex-direction: column;
           gap: 4px;
-          width: 100%;
+          min-width: 180px;
         }
-        .mini-quota-bar .bar-track {
-          width: 100%;
-          height: 4px;
-          background: rgba(255,255,255,0.05);
-          border-radius: 99px;
+        .bar-track {
+          height: 6px;
+          background: rgba(255,255,255,0.08);
+          border-radius: 3px;
           overflow: hidden;
         }
-        .mini-quota-bar .bar-fill {
+        .bar-fill {
           height: 100%;
-          border-radius: 99px;
+          border-radius: 3px;
         }
         .percentage-val {
           font-size: 10px;
           color: var(--text-secondary);
-          font-weight: 600;
+          text-align: right;
         }
-        
         .item-right {
           display: flex;
           align-items: center;
           gap: 12px;
         }
         .active-pill-badge {
-          font-size: 11px;
+          font-size: 10px;
           font-weight: 700;
           color: var(--accent-cyan);
-          background: rgba(6, 182, 212, 0.08);
-          border: 1px solid rgba(6, 182, 212, 0.2);
-          padding: 4px 12px;
-          border-radius: 6px;
-        }
-        .action-btn.delete {
-          padding: 6px;
-          border-radius: 6px;
-          background: transparent;
-          border: none;
-          color: var(--text-muted);
-          cursor: pointer;
-          transition: all 0.15s;
-          display: flex;
-          align-items: center;
-        }
-        .action-btn.delete:hover {
-          color: var(--accent-red);
-          background: rgba(244, 63, 94, 0.15);
-        }
-        
-        /* Right sidebar config message */
-        .config-saved-message {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          font-size: 12px;
-          color: var(--text-secondary);
-          background: rgba(16, 185, 129, 0.08);
-          border: 1px solid rgba(16, 185, 129, 0.15);
-          padding: 10px 12px;
+          background: rgba(6, 182, 212, 0.1);
+          padding: 2px 8px;
           border-radius: 8px;
-          margin-top: 8px;
+          border: 1px solid var(--accent-cyan);
         }
-        .text-btn {
-          background: transparent;
-          border: none;
-          color: var(--accent-purple);
-          font-weight: 700;
-          cursor: pointer;
-          font-size: 12px;
-          margin-left: 6px;
-        }
-        .text-btn:hover {
-          text-decoration: underline;
-        }
-        .btn-full { width: 100%; }
-
         .info-tutorial-card {
-          background: rgba(168, 85, 247, 0.02);
-          border: 1px solid rgba(168, 85, 247, 0.1);
+          border-left: 4px solid var(--accent-cyan);
         }
         .tutorial-header {
           display: flex;
           align-items: center;
           gap: 8px;
-          color: var(--accent-purple);
-          margin-bottom: 12px;
+          margin-bottom: 16px;
+          color: var(--accent-cyan);
         }
         .tutorial-header h4 {
-          font-size: 13px;
+          font-size: 14px;
           font-weight: 700;
+          margin: 0;
         }
         .tutorial-steps {
+          padding-left: 20px;
+          margin: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
           font-size: 12px;
           color: var(--text-secondary);
-          padding-left: 18px;
-          line-height: 1.6;
-        }
-        .tutorial-steps li {
-          margin-bottom: 8px;
+          line-height: 1.5;
         }
         .tutorial-steps a {
           color: var(--accent-cyan);
-          text-decoration: none;
-          font-weight: 600;
-        }
-        .tutorial-steps a:hover {
           text-decoration: underline;
         }
-        .tutorial-steps ul {
-          padding-left: 14px;
-          margin-top: 4px;
-          list-style-type: circle;
-        }
-
-        @media (max-width: 600px) {
-          .account-list-item {
-            flex-direction: column;
-            align-items: stretch !important;
-            gap: 12px;
-          }
-          .item-left {
-            width: 100%;
-          }
-          .item-middle {
-            width: 100%;
-            margin: 4px 0;
-          }
-          .item-right {
-            width: 100%;
-            justify-content: flex-end;
-          }
-        }
-
-        @media (max-width: 480px) {
-          .token-input-row {
-            flex-direction: column;
-            gap: 10px;
-          }
-          .token-input-row .btn {
-            width: 100%;
-          }
+        .tutorial-steps code {
+          background: rgba(255,255,255,0.06);
+          padding: 2px 4px;
+          border-radius: 4px;
+          font-family: monospace;
+          color: var(--text-primary);
         }
       `}</style>
     </div>
